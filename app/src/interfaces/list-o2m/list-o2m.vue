@@ -21,6 +21,19 @@ import { computed, inject, ref, toRefs, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Draggable from 'vuedraggable';
 
+function countVisibleCharacters(htmlString: string): number {
+	// Eliminar tots els tags HTML
+	let visibleText = htmlString.replace(/<[^>]*>?/gm, '');
+
+	// Comptar el nombre de tags <i> abans d'eliminar-los
+	const italicTagsCount = (htmlString.match(/<i[^>]*>/g) || []).length;
+
+	// Sumar 2 per cada tag <i> trobat
+	let count = visibleText.length + italicTagsCount * 2;
+
+	return count;
+}
+
 const props = withDefaults(
 	defineProps<{
 		value?: (number | string | Record<string, any>)[] | Record<string, any>;
@@ -162,6 +175,9 @@ const headers = ref<Array<any>>([]);
 watch(
 	[props, relationInfo, displayItems],
 	() => {
+
+		const maxWidthChars = 50
+
 		if (!relationInfo.value) {
 			headers.value = [];
 			return;
@@ -171,14 +187,26 @@ watch(
 
 		const contentWidth: Record<string, number> = {};
 
+		props.fields.forEach((key) => {
+			console.log(`field: ${key}`);
+			console.log(key);
+		});
+
 		(displayItems.value ?? []).forEach((item: Record<string, any>) => {
 			props.fields.forEach((key) => {
+				console.log(`item size: ${countVisibleCharacters(String(item[key]))} value: ${item[key]}`)
+
+				const length = countVisibleCharacters(String(item[key]))
 				if (!contentWidth[key]) {
 					contentWidth[key] = 5;
 				}
 
-				if (String(item[key]).length > contentWidth[key]) {
-					contentWidth[key] = String(item[key]).length;
+				if (length > contentWidth[key]) {
+					contentWidth[key] = length;
+				}
+
+				if (key == 'es_base_contractual' || key == 'te_enotum'){
+					contentWidth[key] = 17
 				}
 			});
 		});
@@ -193,7 +221,7 @@ watch(
 				return {
 					text: field.name,
 					value: key,
-					width: contentWidth[key] < 10 ? contentWidth[key] * 16 + 10 : 160,
+					width: contentWidth[key] < maxWidthChars ? contentWidth[key] * 12 + 10 : (maxWidthChars * 12),
 					sortable: !['json'].includes(field.type),
 				};
 			})
