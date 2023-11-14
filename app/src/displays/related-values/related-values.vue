@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 const props = defineProps<{
 	collection: string;
 	field: string;
+	inline: boolean;
 	value: Record<string, any> | Record<string, any>[] | null;
 	template?: string;
 }>();
@@ -74,12 +75,22 @@ function getLinkForItem(item: any) {
 
 <template>
 	<value-null v-if="!relatedCollection" />
+	<span v-else-if="props.inline && ['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())">
+		<span v-for="item in value" :key="item[primaryKeyFieldPath!]">
+			<render-template
+				:template="internalTemplate"
+				:item="item"
+				:collection="junctionCollection ?? relatedCollection"
+			/>
+		</span>
+	</span>
 	<v-menu
 		v-else-if="['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())"
 		show-arrow
 		:disabled="value?.length === 0"
 	>
 		<template #activator="{ toggle }">
+			
 			<span class="toggle" :class="{ subdued: value?.length === 0 }" @click.stop="toggle">
 				<span class="label">
 					{{ value?.length }}

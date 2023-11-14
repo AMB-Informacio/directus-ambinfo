@@ -45,6 +45,19 @@ export default defineDisplay({
 				name: '$t:display_template',
 				meta: displayTemplateMeta,
 			},
+			{
+				field: 'inline', // The key should match the prop name
+				name: '$t:displays.related-values.inline', // Use translation keys for the name
+				type: 'boolean', // Specify the type of the option
+				meta: {
+				  width: 'half', // Set the width if needed
+				  interface: 'boolean', // Use the boolean interface
+				  options: {
+					label: '$t:displays.related-values.inline_label', // Use translation keys for labels
+				  },
+				},
+				default: true, // You can set a default value
+			  },
 		];
 	},
 	handler: (value, options, { collection, field }) => {
