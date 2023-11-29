@@ -75,7 +75,7 @@ function getLinkForItem(item: any) {
 
 <template>
 	<value-null v-if="!relatedCollection" />
-	<span v-else-if="props.inline && ['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())">
+	<div class="sub-items-display" v-else-if="props.inline && ['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())">
 		<span v-for="item in value" :key="item[primaryKeyFieldPath!]">
 			<render-template
 				:template="internalTemplate"
@@ -83,7 +83,7 @@ function getLinkForItem(item: any) {
 				:collection="junctionCollection ?? relatedCollection"
 			/>
 		</span>
-	</span>
+	</div>
 	<v-menu
 		v-else-if="['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())"
 		show-arrow
@@ -158,5 +158,10 @@ function getLinkForItem(item: any) {
 	.v-list-item-content {
 		height: var(--v-list-item-min-height, 32px);
 	}
+}
+
+.sub-items-display{
+	display: inline-flex;
+    flex-direction: column;
 }
 </style>
