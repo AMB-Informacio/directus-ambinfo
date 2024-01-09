@@ -27,7 +27,8 @@ COPY . .
 RUN <<EOF
 	pnpm install --recursive --offline --frozen-lockfile
 	npm_config_workspace_concurrency=1 pnpm run build
-	pnpm --filter directus deploy --prod dist
+	#pnpm --filter directus deploy --prod dist
+	pnpm --filter directus deploy dist
 	cd dist
 	# Regenerate package.json file with essential fields only
 	# (see https://github.com/directus/directus/issues/20338)
@@ -54,7 +55,8 @@ EXPOSE 8055
 ENV \
 	DB_CLIENT="sqlite3" \
 	DB_FILENAME="/directus/database/database.sqlite" \
-	NODE_ENV="production" \
+	#NODE_ENV="production" \
+	NODE_ENV="development" \
 	NPM_CONFIG_UPDATE_NOTIFIER="false"
 
 COPY --from=builder --chown=node:node /directus/ecosystem.config.cjs .
