@@ -46,18 +46,31 @@ export default defineDisplay({
 				meta: displayTemplateMeta,
 			},
 			{
-				field: 'inline', // The key should match the prop name
-				name: '$t:displays.related-values.inline', // Use translation keys for the name
+				field: 'on_place', // The key should match the prop name
+				name: '$t:displays.related-values.on_place_option_name', // Use translation keys for the name
 				type: 'boolean', // Specify the type of the option
 				meta: {
 				  width: 'half', // Set the width if needed
 				  interface: 'boolean', // Use the boolean interface
 				  options: {
-					label: '$t:displays.related-values.inline_label', // Use translation keys for labels
+					label: '$t:displays.related-values.on_place_option_label', // Use translation keys for labels
 				  },
 				},
-				default: true, // You can set a default value
+				default: false, // You can set a default value
 			  },
+			  {
+				field: 'one_line', // The key should match the prop name
+				name: '$t:displays.related-values.one_line_option_name', // Use translation keys for the name
+				type: 'boolean', // Specify the type of the option
+				meta: {
+				  width: 'half', // Set the width if needed
+				  interface: 'boolean', // Use the boolean interface
+				  options: {
+					label: '$t:displays.related-values.one_line_option_label', // Use translation keys for labels
+				  },
+				},
+				default: false, // You can set a default value
+			  }
 		];
 	},
 	handler: (value, options, { collection, field }) => {

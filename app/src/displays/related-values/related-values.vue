@@ -10,7 +10,8 @@ import { useI18n } from 'vue-i18n';
 const props = defineProps<{
 	collection: string;
 	field: string;
-	inline: boolean;
+	on_place: boolean;
+	one_line: boolean;
 	value: Record<string, any> | Record<string, any>[] | null;
 	template?: string;
 }>();
@@ -75,7 +76,7 @@ function getLinkForItem(item: any) {
 
 <template>
 	<value-null v-if="!relatedCollection" />
-	<div class="sub-items-display" v-else-if="props.inline && ['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())">
+	<div :class="{ 'sub-items-one-line': !props.one_line, 'sub-items-display': props.on_place }" v-else-if="props.on_place && ['o2m', 'm2m', 'm2a', 'translations', 'files'].includes(localType!.toLowerCase())">
 		<span v-for="item in value" :key="item[primaryKeyFieldPath!]">
 			<render-template
 				:template="internalTemplate"
@@ -162,6 +163,13 @@ function getLinkForItem(item: any) {
 
 .sub-items-display{
 	display: inline-flex;
-    flex-direction: column;
+    flex-direction: row;
+	row-gap: 8px;
 }
+
+.sub-items-one-line{
+	flex-direction: column;
+}
+
+
 </style>

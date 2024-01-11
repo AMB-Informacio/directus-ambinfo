@@ -1693,6 +1693,10 @@ displays:
     related-values: Valors relacionats
     description: Mostra valors relacionats
     display_template_configure_notice: Podeu configurar la plantilla de visualització després de crear aquest camp.
+    on_place_option_name: Mostrar directament
+    on_place_option_label: Directament
+    one_line_option_name: Mostrar en una línia
+    one_line_option_label: En una línia
   user:
     user: Usuari
     description: Mostra un usuari

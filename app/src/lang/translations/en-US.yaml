@@ -2050,6 +2050,10 @@ displays:
     related-values: Related Values
     description: Display relative values
     display_template_configure_notice: You can configure the display template after creating this field.
+    on_place_option_name: Show in place
+    on_place_option_label: 'Yes'
+    one_line_option_name: Show in single line
+    one_line_option_label: Single line
   user:
     user: User
     description: Display a directus user
