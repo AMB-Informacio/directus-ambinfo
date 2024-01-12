@@ -3,5 +3,6 @@
 	"compilerOptions": {
 		"outDir": "dist"
 	},
+	"source_map": true,
 	"include": ["src"]
 }

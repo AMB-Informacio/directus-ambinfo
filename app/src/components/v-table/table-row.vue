@@ -77,7 +77,7 @@ const cssHeight = computed(() => {
 
 <style lang="scss" scoped>
 .table-row {
-	height: v-bind('cssHeight.tableRow');
+	min-height: v-bind('cssHeight.tableRow');
 
 	.cell {
 		display: flex;
@@ -127,10 +127,10 @@ const cssHeight = computed(() => {
 	}
 
 	:deep(.render-template) {
-		height: v-bind('cssHeight.tableRow');
+		min-height: v-bind('cssHeight.tableRow');
 
 		img {
-			height: v-bind('cssHeight.renderTemplateImage');
+			min-height: v-bind('cssHeight.renderTemplateImage');
 		}
 	}
 }
