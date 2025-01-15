@@ -7,7 +7,7 @@ import { flushCaches } from '../cache.js';
 import { getHelpers } from '../database/helpers/index.js';
 import getDatabase from '../database/index.js';
 import emitter from '../emitter.js';
-import { useLogger } from '../logger.js';
+import { useLogger } from '../logger/index.js';
 import { CollectionsService } from '../services/collections.js';
 import { FieldsService } from '../services/fields.js';
 import { RelationsService } from '../services/relations.js';
@@ -20,6 +20,7 @@ import type {
 	SnapshotField,
 } from '../types/index.js';
 import { DiffKind } from '../types/index.js';
+import { transaction } from '../utils/transaction.js';
 import { getSchema } from './get-schema.js';
 
 type CollectionDelta = {
@@ -48,17 +49,12 @@ export async function applyDiff(
 
 	const runPostColumnChange = await helpers.schema.preColumnChange();
 
-	await database.transaction(async (trx) => {
+	await transaction(database, async (trx) => {
 		const collectionsService = new CollectionsService({ knex: trx, schema });
 
 		const getNestedCollectionsToCreate = (currentLevelCollection: string) =>
 			snapshotDiff.collections.filter(
 				({ diff }) => (diff[0] as DiffNew<Collection>).rhs?.meta?.group === currentLevelCollection,
-			) as CollectionDelta[];
-
-		const getNestedCollectionsToDelete = (currentLevelCollection: string) =>
-			snapshotDiff.collections.filter(
-				({ diff }) => (diff[0] as DiffDeleted<Collection>).lhs?.meta?.group === currentLevelCollection,
 			) as CollectionDelta[];
 
 		const createCollections = async (collections: CollectionDelta[]) => {
@@ -133,8 +129,6 @@ export async function applyDiff(
 						);
 					}
 
-					await deleteCollections(getNestedCollectionsToDelete(collection));
-
 					try {
 						await collectionsService.deleteOne(collection, mutationOptions);
 					} catch (err) {
@@ -181,14 +175,13 @@ export async function applyDiff(
 		// then continue with nested collections recursively
 		await createCollections(snapshotDiff.collections.filter(filterCollectionsForCreation));
 
-		// delete top level collections (no group) first, then continue with nested collections recursively
-		await deleteCollections(
-			snapshotDiff.collections.filter(({ diff }) => {
-				if (diff.length === 0 || diff[0] === undefined) return false;
-				const collectionDiff = diff[0] as DiffDeleted<Collection>;
-				return collectionDiff.kind === DiffKind.DELETE && collectionDiff.lhs?.meta?.group === null;
-			}),
-		);
+		const collectionsToDelete = snapshotDiff.collections.filter(({ diff }) => {
+			if (diff.length === 0 || diff[0] === undefined) return false;
+			const collectionDiff = diff[0] as DiffDeleted<Collection>;
+			return collectionDiff.kind === DiffKind.DELETE;
+		});
+
+		if (collectionsToDelete.length > 0) await deleteCollections(collectionsToDelete);
 
 		for (const { collection, diff } of snapshotDiff.collections) {
 			if (diff?.[0]?.kind === DiffKind.EDIT || diff?.[0]?.kind === DiffKind.ARRAY) {
@@ -212,7 +205,7 @@ export async function applyDiff(
 			}
 		}
 
-		const fieldsService = new FieldsService({
+		let fieldsService = new FieldsService({
 			knex: trx,
 			schema: await getSchema({ database: trx, bypassCache: true }),
 		});
@@ -221,6 +214,12 @@ export async function applyDiff(
 			if (diff?.[0]?.kind === DiffKind.NEW && !isNestedMetaUpdate(diff?.[0])) {
 				try {
 					await fieldsService.createField(collection, (diff[0] as DiffNew<Field>).rhs, undefined, mutationOptions);
+
+					// Refresh the schema
+					fieldsService = new FieldsService({
+						knex: trx,
+						schema: await getSchema({ database: trx, bypassCache: true }),
+					});
 				} catch (err) {
 					logger.error(`Failed to create field "${collection}.${field}"`);
 					throw err;
@@ -250,15 +249,24 @@ export async function applyDiff(
 			if (diff?.[0]?.kind === DiffKind.DELETE && !isNestedMetaUpdate(diff?.[0])) {
 				try {
 					await fieldsService.deleteField(collection, field, mutationOptions);
+
+					// Refresh the schema
+					fieldsService = new FieldsService({
+						knex: trx,
+						schema: await getSchema({ database: trx, bypassCache: true }),
+					});
 				} catch (err) {
 					logger.error(`Failed to delete field "${collection}.${field}"`);
 					throw err;
 				}
 
 				// Field deletion also cleans up the relationship. We should ignore any relationship
-				// changes attached to this now non-existing field
+				// changes attached to this now non-existing field except newly created relationship
 				snapshotDiff.relations = snapshotDiff.relations.filter(
-					(relation) => (relation.collection === collection && relation.field === field) === false,
+					(relation) =>
+						(relation.collection === collection &&
+							relation.field === field &&
+							!relation.diff.some((diff) => diff.kind === DiffKind.NEW)) === false,
 				);
 			}
 		}

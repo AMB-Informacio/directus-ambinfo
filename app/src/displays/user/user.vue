@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getAssetUrl } from '@/utils/get-asset-url';
 import { userName } from '@/utils/user-name';
 import { User } from '@directus/types';
 import { computed } from 'vue';
@@ -18,7 +19,7 @@ const src = computed(() => {
 	if (props.value === null) return null;
 
 	if (props.value.avatar?.id) {
-		return `/assets/${props.value.avatar.id}?key=system-small-cover`;
+		return getAssetUrl(`${props.value.avatar.id}?key=system-small-cover`);
 	}
 
 	return null;
@@ -49,15 +50,16 @@ const src = computed(() => {
 
 <style lang="scss" scoped>
 .user {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	height: 100%;
+	vertical-align: middle;
 
 	img {
 		display: inline-block;
 		width: auto;
 		height: 100%;
-		vertical-align: -30%;
+		vertical-align: -67%;
 		border-radius: 4px;
 
 		&.circle {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { i18n } from '@/lang/';
+import { i18n } from '@/lang';
 import { hideDragImage } from '@/utils/hide-drag-image';
 import type { ShowSelect } from '@directus/extensions';
 import { clone, forEach, pick } from 'lodash';
@@ -209,9 +209,7 @@ function onItemSelected(event: ItemSelectEvent) {
 }
 
 function getSelectedState(item: Item) {
-	const selectedKeys = props.selectionUseKeys
-		? props.modelValue
-		: props.modelValue.map((item: any) => item[props.itemKey]);
+	const selectedKeys = props.selectionUseKeys ? props.modelValue : props.modelValue.map((item) => item[props.itemKey]);
 
 	return selectedKeys.includes(item[props.itemKey]);
 }
@@ -284,10 +282,12 @@ function updateSort(newSort: Sort) {
 					<slot name="header-context-menu" v-bind="{ header }" />
 				</template>
 			</table-header>
-			<thead v-if="loading" class="loading-indicator" :class="{ sticky: fixedHeader }">
-				<th scope="colgroup" :style="{ gridColumn: fullColSpan }">
-					<v-progress-linear v-if="loading" indeterminate />
-				</th>
+			<thead v-if="loading" :class="{ sticky: fixedHeader }">
+				<tr class="loading-indicator">
+					<th scope="colgroup" :style="{ gridColumn: fullColSpan }">
+						<v-progress-linear v-if="loading" indeterminate />
+					</th>
+				</tr>
 			</thead>
 			<tbody v-if="loading && items.length === 0">
 				<tr class="loading-text">
@@ -384,8 +384,7 @@ table :deep(th) {
 	color: var(--v-table-color, var(--theme--foreground));
 }
 
-table :deep(tr),
-table :deep(.loading-indicator) {
+table :deep(tr) {
 	display: grid;
 	grid-template-columns: var(--grid-columns);
 }

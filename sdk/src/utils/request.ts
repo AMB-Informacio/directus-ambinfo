@@ -19,10 +19,16 @@ export const request = async <Output = any>(
 			? (options.headers as Record<string, string>)
 			: {};
 
-	const response = await fetcher(url, options);
+	return fetcher(url, options).then((response) => {
+		return extractData(response).catch((reason) => {
+			const result: { response: unknown; errors: any; data?: any } = {
+				errors: reason && typeof reason === 'object' && 'errors' in reason ? reason.errors : reason,
+				response,
+			};
 
-	return extractData(response).catch((reason) => {
-		const errors = typeof reason === 'object' && 'errors' in reason ? reason.errors : reason;
-		throw { errors, response };
+			if (reason && typeof reason === 'object' && 'data' in reason) result.data = reason.data;
+
+			return Promise.reject(result);
+		});
 	});
 };

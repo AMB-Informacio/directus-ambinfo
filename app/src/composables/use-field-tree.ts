@@ -26,7 +26,7 @@ export type FieldTreeContext = {
 
 export function useFieldTree(
 	collection: Ref<string | null>,
-	inject?: Ref<{ fields: Field[]; relations: Relation[] } | null>,
+	inject?: Ref<{ fields: Field[]; relations?: Relation[] } | null>,
 	filter: (field: Field, parent?: FieldNode) => boolean = () => true,
 ): FieldTreeContext {
 	const fieldsStore = useFieldsStore();
@@ -35,7 +35,10 @@ export function useFieldTree(
 	const treeList = ref<FieldNode[]>([]);
 	const visitedPaths = ref<Set<string>>(new Set());
 
-	watch(() => collection.value, refresh, { immediate: true });
+	// Refresh when collection or fields of the collection are updated
+	watch([collection, () => collection.value && fieldsStore.getFieldsForCollectionSorted(collection.value)], refresh, {
+		immediate: true,
+	});
 
 	return { treeList, loadFieldRelations, refresh };
 
@@ -167,27 +170,27 @@ export function useFieldTree(
 	}
 
 	function getNodeAtPath([field, ...path]: string[], root?: FieldNode[]): FieldNode | undefined {
-		let node = root?.find((node) => node.field === field);
+		if (!root?.length) return undefined;
 
-		if (!node) {
-			node = root
-				?.reduce<FieldNode[]>((acc, node) => {
-					if (node.group === true && node.children && node.children.length > 0) {
-						acc.push(...node.children);
-					}
+		const node = findFieldNodeInTree(field, root);
 
-					return acc;
-				}, [])
-				.find((node) => node.field === field);
-		}
+		if (node && path.length) return getNodeAtPath(path, node.children);
 
-		if (!node) return undefined;
+		return node;
+	}
 
-		if (path.length) {
-			return getNodeAtPath(path, node.children);
-		} else {
-			return node;
-		}
+	function findFieldNodeInTree(field: string | undefined, root: FieldNode[]): FieldNode | undefined {
+		const node = root.find((node) => node.field === field);
+		if (node) return node;
+
+		const childrenNodes = root.flatMap((node) => {
+			if (node.group && node.children?.length) return node.children;
+			return [];
+		});
+
+		if (!childrenNodes?.length) return undefined;
+
+		return findFieldNodeInTree(field, childrenNodes);
 	}
 
 	function loadFieldRelations(path: string) {
@@ -196,7 +199,7 @@ export function useFieldTree(
 
 			const node = getNodeAtPath(path.split('.'), treeList.value);
 
-			if (node && node.children?.length === 1 && node.children[0]._loading) {
+			if (node && node.children?.length === 1 && (node.children as [FieldNode])[0]._loading) {
 				node.children = getTree(node.relatedCollection, node);
 			}
 

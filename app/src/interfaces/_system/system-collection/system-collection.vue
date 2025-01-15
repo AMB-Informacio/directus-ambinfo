@@ -22,16 +22,13 @@ const { t } = useI18n();
 const collectionsStore = useCollectionsStore();
 
 const collections = computed(() => {
-	let collections = collectionsStore.collections;
+	let collections = collectionsStore.allCollections;
 
 	if (!props.includeSingleton) {
 		collections = collections.filter((collection) => collection?.meta?.singleton === false);
 	}
 
-	return [
-		...collections.filter((collection) => collection.collection.startsWith('directus_') === false),
-		...(props.includeSystem ? collectionsStore.crudSafeSystemCollections : []),
-	];
+	return [...collections, ...(props.includeSystem ? collectionsStore.crudSafeSystemCollections : [])];
 });
 
 const items = computed(() => {

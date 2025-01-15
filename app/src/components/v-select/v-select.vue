@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useCustomSelection, useCustomSelectionMultiple } from '@directus/composables';
 import { Placement } from '@popperjs/core';
-import { debounce, get } from 'lodash';
+import { debounce, get, isArray } from 'lodash';
 import { computed, Ref, ref, toRefs, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SelectListItemGroup from './select-list-item-group.vue';
@@ -54,10 +54,14 @@ const props = withDefaults(
 		/** Renders the element inline, good for seamless selections */
 		inline?: boolean;
 		label?: boolean;
+		/** Translation strings to replace items naming */
+		allItemsTranslation?: string;
+		itemCountTranslation?: string;
 		/** Limits the amount of items inside the preview */
 		multiplePreviewThreshold?: number;
 		/** The direction the menu should open */
 		placement?: Placement;
+		menuFullHeight?: boolean;
 	}>(),
 	{
 		itemText: 'text',
@@ -131,7 +135,7 @@ function useItems() {
 				selectable: get(item, props.itemSelectable),
 				children: children
 					? children.filter((childItem: Record<string, any>) =>
-							filterItem(get(childItem, props.itemText), get(childItem, props.itemValue), childItem.children),
+							filterItem(childItem.text, childItem.value, childItem.children),
 					  )
 					: children,
 				hidden: internalSearch.value ? !filterItem(text, value, item.children) : false,
@@ -204,11 +208,15 @@ function useDisplayValue() {
 				const selectionCount = props.modelValue.length;
 
 				if (itemCount === selectionCount) {
-					return { text: t('all_items') };
+					return { text: t(props.allItemsTranslation ?? 'all_items') };
 				} else {
-					return { text: t('item_count', selectionCount) };
+					return { text: t(props.itemCountTranslation ?? 'item_count', selectionCount) };
 				}
 			}
+		}
+
+		if (props.multiple) {
+			return { text: t(props.itemCountTranslation ?? 'item_count', 0) };
 		}
 
 		const item = getItemForValue(props.modelValue);
@@ -245,6 +253,7 @@ function useDisplayValue() {
 		:show-arrow="inline === true"
 		:close-on-content-click="closeOnContentClick"
 		:placement="placement"
+		:full-height="menuFullHeight"
 	>
 		<template #activator="{ toggle, active }">
 			<div
@@ -256,7 +265,14 @@ function useDisplayValue() {
 				<slot name="preview">{{ displayValue.text || placeholder }}</slot>
 				<v-icon name="expand_more" :class="{ active }" />
 			</div>
-			<slot v-else name="preview">
+			<slot
+				v-else
+				name="preview"
+				v-bind="{
+					toggle: toggle,
+					active: active,
+				}"
+			>
 				<v-input
 					:full-width="fullWidth"
 					readonly
@@ -295,6 +311,12 @@ function useDisplayValue() {
 				</v-list-item>
 				<v-divider />
 			</template>
+
+			<v-list-item v-if="internalItemsCount === 0 && !allowOther">
+				<v-list-item-content>
+					{{ t('no_options_available') }}
+				</v-list-item-content>
+			</v-list-item>
 
 			<v-list-item v-if="internalItemsCount > 10 || search">
 				<v-list-item-content>
@@ -343,7 +365,11 @@ function useDisplayValue() {
 				<v-list-item
 					v-for="otherVal in otherValues"
 					:key="otherVal.key"
-					:active="((modelValue as string | string[]) || []).includes(otherVal.value)"
+					:active="
+						(modelValue && (typeof modelValue === 'string' || isArray(modelValue)) ? modelValue : []).includes(
+							otherVal.value,
+						)
+					"
 					@click.stop
 				>
 					<v-list-item-icon>
@@ -388,7 +414,7 @@ function useDisplayValue() {
 */
 
 .list {
-	--v-list-min-width: 0;
+	--v-list-min-width: 180px;
 }
 
 .v-input {

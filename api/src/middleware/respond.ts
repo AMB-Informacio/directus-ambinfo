@@ -1,11 +1,9 @@
+import { useEnv } from '@directus/env';
 import { parse as parseBytesConfiguration } from 'bytes';
 import type { RequestHandler } from 'express';
-import { assign } from 'lodash-es';
 import { getCache, setCacheValue } from '../cache.js';
-import { useEnv } from '../env.js';
-import { useLogger } from '../logger.js';
-import { ExportService } from '../services/import-export/index.js';
-import { VersionsService } from '../services/versions.js';
+import { useLogger } from '../logger/index.js';
+import { ExportService } from '../services/import-export.js';
 import asyncHandler from '../utils/async-handler.js';
 import { getCacheControlHeader } from '../utils/get-cache-headers.js';
 import { getCacheKey } from '../utils/get-cache-key.js';
@@ -23,34 +21,20 @@ export const respond: RequestHandler = asyncHandler(async (req, res) => {
 
 	if (env['CACHE_VALUE_MAX_SIZE'] !== false) {
 		const valueSize = res.locals['payload'] ? stringByteSize(JSON.stringify(res.locals['payload'])) : 0;
-		const maxSize = parseBytesConfiguration(env['CACHE_VALUE_MAX_SIZE']);
-		exceedsMaxSize = valueSize > maxSize;
-	}
-
-	if (
-		req.sanitizedQuery.version &&
-		req.collection &&
-		(req.singleton || req.params['pk']) &&
-		'data' in res.locals['payload']
-	) {
-		const versionsService = new VersionsService({ accountability: req.accountability ?? null, schema: req.schema });
-
-		const saves = await versionsService.getVersionSaves(req.sanitizedQuery.version, req.collection, req.params['pk']);
-
-		if (saves) {
-			assign(res.locals['payload'].data, ...saves);
-		}
+		const maxSize = parseBytesConfiguration(env['CACHE_VALUE_MAX_SIZE'] as string);
+		if (maxSize !== null) exceedsMaxSize = valueSize > maxSize;
 	}
 
 	if (
 		(req.method.toLowerCase() === 'get' || req.originalUrl?.startsWith('/graphql')) &&
+		req.originalUrl?.startsWith('/auth') === false &&
 		env['CACHE_ENABLED'] === true &&
 		cache &&
 		!req.sanitizedQuery.export &&
 		res.locals['cache'] !== false &&
 		exceedsMaxSize === false
 	) {
-		const key = getCacheKey(req);
+		const key = await getCacheKey(req);
 
 		try {
 			await setCacheValue(cache, key, res.locals['payload'], getMilliseconds(env['CACHE_TTL']));

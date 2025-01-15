@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import api, { RequestError } from '@/api';
 import { login, logout } from '@/auth';
-import { hydrate } from '@/hydrate';
 import { getItemRoute } from '@/utils/get-route';
 import { useCollection } from '@directus/composables';
 import { useAppStore } from '@directus/stores';
 import { Share } from '@directus/types';
+import { useHead } from '@unhead/vue';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import ShareItem from './components/share-item.vue';
+import { useFieldsStore } from '@/stores/fields';
+import { usePermissionsStore } from '@/stores/permissions';
+import { useRelationsStore } from '@/stores/relations';
+import { useCollectionsStore } from '@/stores/collections';
 
 type ShareInfo = Pick<
 	Share,
@@ -115,6 +119,18 @@ async function handleAuth() {
 	}
 }
 
+async function hydrate() {
+	const collectionsStore = useCollectionsStore();
+	const fieldsStore = useFieldsStore();
+	const permissionsStore = usePermissionsStore();
+	const relationsStore = useRelationsStore();
+
+	await collectionsStore.hydrate();
+	await permissionsStore.hydrate();
+	await fieldsStore.hydrate({ skipTranslation: true });
+	await relationsStore.hydrate();
+}
+
 async function authenticate() {
 	authenticating.value = true;
 
@@ -132,6 +148,8 @@ async function authenticate() {
 		authenticating.value = false;
 	}
 }
+
+useHead({ title });
 </script>
 
 <template>

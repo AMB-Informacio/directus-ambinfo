@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import api from '@/api';
 import { useShortcut } from '@/composables/use-shortcut';
-import { Activity } from '@/types/activity';
+import { getAssetUrl } from '@/utils/get-asset-url';
 import { md } from '@/utils/md';
 import { notify } from '@/utils/notify';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { userName } from '@/utils/user-name';
-import { User } from '@directus/types';
+import { Comment, User } from '@directus/types';
 import axios, { CancelTokenSource } from 'axios';
 import { cloneDeep, throttle } from 'lodash';
 import { ComponentPublicInstance, computed, ref, watch } from 'vue';
@@ -17,7 +17,7 @@ const props = withDefaults(
 		refresh: () => Promise<void>;
 		collection: string;
 		primaryKey: string | number;
-		existingComment?: Activity | null;
+		existingComment?: Comment | null;
 		previews?: Record<string, string> | null;
 	}>(),
 	{
@@ -114,7 +114,7 @@ const loadUsers = throttle(async (name: string): Promise<any> => {
 		const result = await api.get('/users', {
 			params: {
 				filter: name === '' || !name ? undefined : filter,
-				fields: ['first_name', 'last_name', 'email', 'id', 'avatar'],
+				fields: ['first_name', 'last_name', 'email', 'id', 'avatar.id'],
 			},
 			cancelToken: cancelToken.token,
 		});
@@ -142,7 +142,6 @@ function cancel() {
 	}
 }
 
-// Why are selections so weird?
 function saveCursorPosition() {
 	if (document.getSelection) {
 		const selection = document.getSelection();
@@ -219,7 +218,7 @@ function triggerSearch({ searchQuery, caretPosition }: { searchQuery: string; ca
 
 function avatarSource(url: string) {
 	if (url === null) return '';
-	return `/assets/${url}?key=system-small-cover`;
+	return getAssetUrl(`${url}?key=system-small-cover`);
 }
 
 async function postComment() {
@@ -228,11 +227,11 @@ async function postComment() {
 
 	try {
 		if (props.existingComment) {
-			await api.patch(`/activity/comment/${props.existingComment.id}`, {
+			await api.patch(`/comments/${props.existingComment.id}`, {
 				comment: newCommentContent.value,
 			});
 		} else {
-			await api.post(`/activity/comment`, {
+			await api.post(`/comments`, {
 				collection: props.collection,
 				item: props.primaryKey,
 				comment: newCommentContent.value,

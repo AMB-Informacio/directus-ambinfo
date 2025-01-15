@@ -96,14 +96,14 @@ const generatedKey = computed(() =>
 
 const { operations } = useExtensions();
 
-const displayOperations = computed(() => {
-	return operations.value.map((operation) => ({
+const displayOperations = computed(() =>
+	operations.value.map((operation) => ({
 		value: operation.id,
 		icon: operation.icon,
 		text: operation.name,
 		description: operation.description,
-	}));
-});
+	})),
+);
 
 const operationOptions = computed(() => {
 	if (typeof selectedOperation.value?.options === 'function') {
@@ -196,7 +196,7 @@ function saveOperation() {
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .content {
 	padding: var(--content-padding);
@@ -204,7 +204,7 @@ function saveOperation() {
 	padding-bottom: var(--content-padding-bottom);
 
 	.grid {
-		@include form-grid;
+		@include mixins.form-grid;
 	}
 }
 

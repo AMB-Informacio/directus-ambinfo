@@ -1,14 +1,14 @@
 import type { FieldsWildcard, HasManyToAnyRelation, PickRelationalFields } from './fields.js';
 import type { MappedFunctionFields } from './functions.js';
 import type { ItemType } from './schema.js';
-import type { IfAny, IsNullable, Merge, Mutable, UnpackList } from './utils.js';
+import type { IfAny, IsNullable, Merge, Mutable, UnpackList, Prettify } from './utils.js';
 
 /**
  * Apply the configured fields query parameter on a given Item type
  */
 export type ApplyQueryFields<
 	// input types
-	Schema extends object,
+	Schema,
 	Collection extends object,
 	ReadonlyFields,
 	// calculated types
@@ -20,26 +20,28 @@ export type ApplyQueryFields<
 > = IfAny<
 	Schema,
 	Record<string, any>,
-	Merge<
-		MappedFunctionFields<Schema, CollectionItem> extends infer FF
-			? MapFlatFields<CollectionItem, FlatFields, FF extends Record<string, string> ? FF : Record<string, string>>
-			: never,
-		RelationalFields extends never
-			? never
-			: {
-					[Field in keyof RelationalFields]: Field extends keyof CollectionItem
-						? Extract<CollectionItem[Field], ItemType<Schema>> extends infer RelatedCollection
-							? RelationNullable<
-									CollectionItem[Field],
-									RelatedCollection extends any[]
-										? HasManyToAnyRelation<RelatedCollection> extends never
-											? ApplyNestedQueryFields<Schema, RelatedCollection, RelationalFields[Field]>[] | null // many-to-many or one-to-many
-											: ApplyManyToAnyFields<Schema, RelatedCollection, RelationalFields[Field]>[] // many-to-any'
-										: ApplyNestedQueryFields<Schema, RelatedCollection, RelationalFields[Field]> // many-to-one
-							  >
-							: never
-						: never;
-			  }
+	Prettify<
+		Merge<
+			MappedFunctionFields<Schema, CollectionItem> extends infer FF
+				? MapFlatFields<CollectionItem, FlatFields, FF extends Record<string, string> ? FF : Record<string, string>>
+				: never,
+			RelationalFields extends never
+				? never
+				: {
+						[Field in keyof RelationalFields]: Field extends keyof CollectionItem
+							? Extract<CollectionItem[Field], ItemType<Schema>> extends infer RelatedCollection
+								? RelationNullable<
+										CollectionItem[Field],
+										RelatedCollection extends any[]
+											? HasManyToAnyRelation<RelatedCollection> extends never
+												? ApplyNestedQueryFields<Schema, RelatedCollection, RelationalFields[Field]>[] | null // many-to-many or one-to-many
+												: ApplyManyToAnyFields<Schema, RelatedCollection, RelationalFields[Field]>[] // many-to-any'
+											: ApplyNestedQueryFields<Schema, RelatedCollection, RelationalFields[Field]> // many-to-one
+								  >
+								: never
+							: never;
+				  }
+		>
 	>
 >;
 
@@ -48,7 +50,7 @@ export type ApplyQueryFields<
  */
 export type ApplyManyToAnyFields<
 	// input types
-	Schema extends object,
+	Schema,
 	JunctionCollection,
 	FieldsList,
 	// calculated types
@@ -58,13 +60,24 @@ export type ApplyManyToAnyFields<
 		? ApplyQueryFields<Schema, Junction, Readonly<UnpackList<FieldsList>>> // no relational fields
 		: 'item' extends keyof PickRelationalFields<FieldsList> // do m2a magic
 		  ? PickRelationalFields<FieldsList>['item'] extends infer ItemFields
-				? Omit<ApplyQueryFields<Schema, Omit<Junction, 'item'>, Readonly<UnpackList<FieldsList>>>, 'item'> & {
-						item: {
-							[Scope in keyof ItemFields]: Scope extends keyof Schema
-								? ApplyNestedQueryFields<Schema, Schema[Scope], ItemFields[Scope]>
-								: never;
-						}[keyof ItemFields];
-				  }
+				? Omit<ApplyQueryFields<Schema, Omit<Junction, 'item'>, Readonly<UnpackList<FieldsList>>>, 'item'> &
+						('collection' extends UnpackList<FieldsList>
+							? {
+									// try to use collection for union discrimation
+									[Scope in keyof ItemFields]: {
+										collection: Scope;
+										item: Scope extends keyof Schema
+											? ApplyNestedQueryFields<Schema, Schema[Scope], ItemFields[Scope]>
+											: never;
+									};
+							  }[keyof ItemFields]
+							: {
+									item: {
+										[Scope in keyof ItemFields]: Scope extends keyof Schema
+											? ApplyNestedQueryFields<Schema, Schema[Scope], ItemFields[Scope]>
+											: never;
+									}[keyof ItemFields];
+							  })
 				: never
 		  : ApplyQueryFields<Schema, Junction, Readonly<UnpackList<FieldsList>>> // no items query
 	: never;
@@ -72,7 +85,7 @@ export type ApplyManyToAnyFields<
 /**
  * wrapper to aid in recursion
  */
-export type ApplyNestedQueryFields<Schema extends object, Collection, Fields> = Collection extends object
+export type ApplyNestedQueryFields<Schema, Collection, Fields> = Collection extends object
 	? ApplyQueryFields<Schema, Collection, Readonly<UnpackList<Fields>>>
 	: never;
 

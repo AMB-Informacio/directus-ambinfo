@@ -5,8 +5,8 @@ import type { RestCommand } from '../../types.js';
  * @returns Nothing
  */
 export const clearCache =
-	<Schema extends object>(): RestCommand<void, Schema> =>
-	() => ({
+	<Schema>(): RestCommand<void, Schema> =>
+	(system = false) => ({
 		method: 'POST',
-		path: `/utils/cache/clear`,
+		path: `/utils/cache/clear${system ? '?system' : ''}`,
 	});

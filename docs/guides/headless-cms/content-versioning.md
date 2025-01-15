@@ -14,8 +14,8 @@ use Content Versioning, including drafting content without publishing it, and mo
 
 ## Concepts
 
-1. **Version:** A version is a snapshot of a piece of content at a particular point in time. Each version represents the
-   state of the content at a specific moment, and it can be used to track changes and maintain a history of the content.
+1. **Version:** A version is a snapshot of the differences between the original item and the created version. Each
+   version represents a set of future changes to be applied to the item.
 2. **Main:** The main version is the original version of a piece of content that has been created and published. It is
    the default version that is displayed to users. The main version is the "source of truth" for all other versions.
 3. **Promote:** Promoting a version means to make it the new main version. When a new version is promoted, it becomes
@@ -84,7 +84,7 @@ our [API reference documentation](/reference/system/versions).
 Under the hood, content versions are stored in the `directus_revisions` collection. In bigger projects this collection
 can get large.
 
-Some Directus users combat this my periodically purging some or all data in this collection. Be aware that this could
+Some Directus users combat this by periodically purging some or all data in this collection. Be aware that this could
 unintentionally purge content versions, so purging logic may have to be updated.
 
 ## Next Steps

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useCollectionsStore } from '@/stores/collections';
 import { LOCAL_TYPES } from '@directus/constants';
-import { orderBy } from 'lodash';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import RelatedCollectionSelect from '../shared/related-collection-select.vue';
@@ -22,14 +21,14 @@ const oneAllowedCollections = syncFieldDetailStoreProperty('relations.m2o.meta.o
 
 const availableCollections = computed(() => {
 	return [
-		...orderBy(collectionsStore.databaseCollections, ['collection'], ['asc']),
+		...collectionsStore.databaseCollections.filter((collection) => collection.meta),
 		{
 			divider: true,
 		},
 		{
 			collection: t('system'),
 			selectable: false,
-			children: orderBy(collectionsStore.crudSafeSystemCollections, ['collection'], ['asc']),
+			children: collectionsStore.crudSafeSystemCollections,
 		},
 	];
 });
@@ -106,13 +105,13 @@ const availableCollections = computed(() => {
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .relationship {
-	@include form-grid;
-
 	--v-select-font-family: var(--theme--fonts--monospace--font-family);
 	--v-input-font-family: var(--theme--fonts--monospace--font-family);
+
+	@include mixins.form-grid;
 
 	&:not(:empty) {
 		margin-bottom: 20px;

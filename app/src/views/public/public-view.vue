@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useServerStore } from '@/stores/server';
-import { getRootPath } from '@/utils/get-root-path';
+import { getAssetUrl } from '@/utils/get-asset-url';
 import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -22,13 +22,14 @@ const hasCustomBackground = computed(() => {
 	return !!info.value?.project?.public_background;
 });
 
+const customBackgroundIsVideo = computed(() => info.value?.project?.public_background?.type?.startsWith('video/'));
+const customBackgroundUrl = computed(() => getAssetUrl(info.value?.project?.public_background?.id ?? ''));
+
 const artStyles = computed(() => {
 	if (!hasCustomBackground.value) return {};
 
-	const url = getRootPath() + `assets/${info.value!.project?.public_background}`;
-
 	return {
-		background: `url(${url})`,
+		background: `url(${customBackgroundUrl.value})`,
 		backgroundSize: 'cover',
 		backgroundPosition: 'center center',
 	};
@@ -36,12 +37,12 @@ const artStyles = computed(() => {
 
 const foregroundURL = computed(() => {
 	if (!info.value?.project?.public_foreground) return null;
-	return '/assets/' + info.value.project?.public_foreground;
+	return getAssetUrl(info.value.project?.public_foreground);
 });
 
 const logoURL = computed<string | null>(() => {
 	if (!info.value?.project?.project_logo) return null;
-	return '/assets/' + info.value.project?.project_logo;
+	return getAssetUrl(info.value.project?.project_logo);
 });
 </script>
 
@@ -64,8 +65,12 @@ const logoURL = computed<string | null>(() => {
 					<img src="./logo-light.svg" alt="Directus" class="directus-logo" />
 				</div>
 				<div class="title">
-					<h1 class="type-title">{{ info?.project?.project_name }}</h1>
-					<p class="subtitle">{{ info?.project?.project_descriptor ?? t('application') }}</p>
+					<h1 class="type-title"><v-text-overflow :text="info?.project?.project_name" placement="bottom" /></h1>
+					<v-text-overflow
+						class="subtitle"
+						:text="info?.project?.project_descriptor ?? t('application')"
+						placement="bottom"
+					/>
 				</div>
 			</div>
 
@@ -82,6 +87,8 @@ const logoURL = computed<string | null>(() => {
 				<div><div></div></div>
 				<div><div></div></div>
 			</div>
+
+			<video v-else-if="customBackgroundIsVideo" :src="customBackgroundUrl" autoplay muted loop />
 
 			<transition name="scale">
 				<v-image v-if="foregroundURL" class="foreground" :src="foregroundURL" :alt="info?.project?.project_name" />
@@ -179,6 +186,16 @@ const logoURL = computed<string | null>(() => {
 		height: 100%;
 		background-position: center center;
 		background-size: cover;
+
+		video {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			position: absolute;
+			z-index: -1;
+			top: 0;
+			left: 0;
+		}
 
 		.fallback {
 			position: absolute;
@@ -359,6 +376,7 @@ const logoURL = computed<string | null>(() => {
 				background-color: rgb(38 50 56 / 0.2);
 				border-radius: 6px;
 				backdrop-filter: blur(2px);
+				word-break: break-word;
 			}
 		}
 
@@ -382,6 +400,7 @@ const logoURL = computed<string | null>(() => {
 		.title {
 			margin-top: 2px;
 			margin-left: 16px;
+			overflow: hidden;
 
 			h1 {
 				font-weight: 700;
@@ -390,7 +409,6 @@ const logoURL = computed<string | null>(() => {
 			}
 
 			.subtitle {
-				width: 100%;
 				color: var(--theme--foreground-subdued);
 			}
 		}

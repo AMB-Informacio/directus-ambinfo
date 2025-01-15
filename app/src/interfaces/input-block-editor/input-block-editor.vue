@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import api, { addTokenToURL } from '@/api';
+import api from '@/api';
 import { useCollectionsStore } from '@/stores/collections';
 import { unexpectedError } from '@/utils/unexpected-error';
 import EditorJS from '@editorjs/editorjs';
 import { cloneDeep, isEqual } from 'lodash';
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
+import { useBus } from './bus';
 import getTools from './tools';
 import { useFileHandler } from './use-file-handler';
+
+import './editorjs-overrides.css';
+
+// https://github.com/codex-team/editor.js/blob/057bf17a6fc2d5e05c662107918d7c3e943d077c/src/components/events/RedactorDomChanged.ts#L4
+const RedactorDomChanged = 'redactor dom changed';
 
 const props = withDefaults(
 	defineProps<{
@@ -28,6 +35,8 @@ const props = withDefaults(
 	},
 );
 
+const bus = useBus();
+
 const emit = defineEmits<{ input: [value: EditorJS.OutputData | null] }>();
 
 const { t } = useI18n();
@@ -43,10 +52,10 @@ const uploaderComponentElement = ref<HTMLElement>();
 const editorElement = ref<HTMLElement>();
 const haveFilesAccess = Boolean(collectionStore.getCollection('directus_files'));
 const haveValuesChanged = ref(false);
+const router = useRouter();
 
 const tools = getTools(
 	{
-		addTokenToURL,
 		baseURL: api.defaults.baseURL,
 		setFileHandler,
 		setCurrentPreview,
@@ -55,6 +64,12 @@ const tools = getTools(
 	props.tools,
 	haveFilesAccess,
 );
+
+bus.on(async (event) => {
+	if (event.type === 'open-url') {
+		router.push(event.payload);
+	}
+});
 
 onMounted(async () => {
 	editorjsRef.value = new EditorJS({
@@ -68,7 +83,6 @@ onMounted(async () => {
 	});
 
 	await editorjsRef.value.isReady;
-	editorjsIsReady.value = true;
 
 	const sanitizedValue = sanitizeValue(props.value);
 
@@ -79,10 +93,17 @@ onMounted(async () => {
 	if (props.autofocus) {
 		editorjsRef.value.focus();
 	}
+
+	editorjsRef.value.on(RedactorDomChanged, () => {
+		emitValue(editorjsRef.value!);
+	});
+
+	editorjsIsReady.value = true;
 });
 
 onUnmounted(() => {
 	editorjsRef.value?.destroy();
+	bus.reset();
 });
 
 watch(
@@ -112,7 +133,7 @@ watch(
 	},
 );
 
-async function emitValue(context: EditorJS.API) {
+async function emitValue(context: EditorJS.API | EditorJS) {
 	if (props.disabled || !context || !context.saver) return;
 
 	try {
@@ -174,10 +195,6 @@ function sanitizeValue(value: any): EditorJS.OutputData | null {
 	</div>
 </template>
 
-<style lang="scss">
-@import './editorjs-overrides.css';
-</style>
-
 <style lang="scss" scoped>
 .btn--default {
 	color: #fff !important;
@@ -207,7 +224,8 @@ function sanitizeValue(value: any): EditorJS.OutputData | null {
 		border-color: var(--theme--form--field--input--border-color-hover);
 	}
 
-	&:focus-within {
+	&:focus-within,
+	&:has(.ce-popover--opened) {
 		border-color: var(--theme--form--field--input--border-color-focus);
 	}
 }

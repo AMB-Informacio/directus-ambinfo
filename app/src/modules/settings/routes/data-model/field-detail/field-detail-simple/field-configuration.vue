@@ -33,7 +33,7 @@ const typeOptions = computed(() => {
 	if (!chosenInterfaceConfig.value) return [];
 
 	return chosenInterfaceConfig.value.types.map((type) => ({
-		text: t(type),
+		text: t(type === 'geometry' ? 'geometry.All' : type),
 		value: type,
 	}));
 });
@@ -72,11 +72,12 @@ const options = computed({
 		return fieldDetailStore.field.meta?.options ?? {};
 	},
 	set(newOptions: Record<string, any>) {
-		fieldDetailStore.$patch((state) => {
-			state.field.meta = {
-				...(state.field.meta ?? {}),
-				options: newOptions,
-			};
+		fieldDetailStore.update({
+			field: {
+				meta: {
+					options: newOptions,
+				},
+			},
 		});
 	},
 });
@@ -146,11 +147,16 @@ const options = computed({
 </template>
 
 <style scoped lang="scss">
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .field-configuration {
 	--v-button-background-color-disabled: var(--theme--background-normal);
 	--columns: 1;
+
+	grid-column: 1 / span var(--columns);
+	background-color: var(--theme--background-subdued);
+	border-top: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
+	border-bottom: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
 
 	@media (min-width: 400px) {
 		--columns: 2;
@@ -163,11 +169,6 @@ const options = computed({
 	@media (min-width: 840px) {
 		--columns: 4;
 	}
-
-	grid-column: 1 / span var(--columns);
-	background-color: var(--theme--background-subdued);
-	border-top: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
-	border-bottom: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
 }
 
 .setup {
@@ -178,7 +179,7 @@ const options = computed({
 
 .schema {
 	margin-bottom: 20px;
-	@include form-grid;
+	@include mixins.form-grid;
 }
 
 .monospace {

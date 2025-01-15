@@ -8,6 +8,10 @@
 	color: var(--theme--form--field--input--foreground);
 }
 
+.tox .tox-tbtn:focus {
+	background: transparent;
+}
+
 .tox .tox-listbox__select-chevron svg,
 .tox .tox-collection__item-caret svg {
 	fill: var(--theme--form--field--input--foreground);
@@ -397,6 +401,7 @@ body.dark .tox .tox-toolbar__overflow {
 
 .tox .tox-insert-table-picker .tox-insert-table-picker__selected {
 	border-color: var(--theme--primary);
+	background-color: var(--theme--primary-subdued);
 }
 
 .tox .tox-pop.tox-pop--top::after {

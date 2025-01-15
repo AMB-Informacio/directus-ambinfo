@@ -1,24 +1,4 @@
 ---
-## Be aware:
-#Due to the way this is imported, JavaScript reserved words, including "delete", "private",
-#"void", etc are stripped out. See
-#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/pluginutils/src/makeLegalIdentifier.ts#L4
-#and
-#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/yaml/src/index.js#L45
-#Illegal words:
-#'break', 'case', 'class', 'catch', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
-#'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof',
-#'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
-#'while', 'with', 'yield', 'enum', 'await', 'implements', 'package', 'protected', 'static',
-#'interface', 'private', 'public', 'arguments', 'Infinity', 'NaN', 'undefined', 'null', 'true',
-#'false', 'eval', 'uneval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'decodeURI',
-#'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape', 'Object',
-#'Function', 'Boolean', 'Symbol', 'Error', 'EvalError', 'InternalError', 'RangeError',
-#'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Number', 'Math', 'Date', 'String',
-#'RegExp', 'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
-#'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
-#'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
-#'Proxy', 'Intl'
 identifier: শনাক্তকারী
 avatar: অবতার
 application: অ্যাপ্লিকেশন
@@ -27,14 +7,18 @@ method: পদ্ধতি
 published: প্রকাশিত
 draft: খসড়া
 archived: সংরক্ষণাগারভুক্ত
+marketplace: মার্কেটপ্লেস
+extensions: এক্সটেনশন্স
 modules: মডিউল
 module_bar: মডিউল বার
 logs: ক্রিয়াকলাপ
+unknown: অজানা
 reset_width: প্রস্থ পুনঃস্থাপন করুন
 tile_size: টাইল সাইজ
 edit_field: সম্পাদনা ক্ষেত্র
 conditions: শর্তাবলী
 location: অবস্থান
+collection_names_are_case_sensitive: কালেকশন এর নাম গুলো case sensitive
 condition_rules: শর্ত বিধি
 input: ইনপুট
 maps: মানচিত্র
@@ -46,12 +30,19 @@ duplicate_field: ডুপ্লিকেট ফিল্ড
 half_width: অর্ধ - প্রস্থ
 full_width: অর্ধ - প্রস্থ
 group: গ্রুপ
+popular: পপুলার
 export_items: আইটেম রপ্তানি করুন
 and: এবং
 or: অথবা
 init: এটায়
 dataset_too_large_currently_showing_n_items: ডেটাসেটটি অনেক বড়ো। বর্তমানে শুধু মাত্র প্রথম {n} আইটেমটি দেখানো হচ্ছে।
 modifier: বাছাইকারী
+extension_interface: ইন্টারফেস
+extension_display: ডিসপ্লে
+extension_layout: লেআউট
+extension_module: মডিউল
+extension_panel: প্যানেল
+extension_theme: থিম
 extension_hook: হুক
 extension_modules: মডিউল
 custom: ব্যক্তিগতকরণ
@@ -128,7 +119,7 @@ time: সময়
 timestamp: টাইমস্ট্যাম্প
 uuid: ইউইউআইডি
 hash: হ্যাশ
-geometry: জ্যামিতি (সমস্ত)
+source_registry: মার্কেটপ্লেস
 fields:
   directus_settings:
     module_bar: মডিউল বার
@@ -147,6 +138,8 @@ interfaces:
 displays:
   formatted-value:
     text: পাঠ্য
+  hash:
+    hash: হ্যাশ
 operations:
   log:
     message: বার্তা

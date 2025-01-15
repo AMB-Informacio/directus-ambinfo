@@ -19,6 +19,7 @@
 #'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
 #'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
 #'Proxy', 'Intl'
+about: Om
 identifier: Identifikator
 avatar: Profilbilde
 application: Applikasjon
@@ -27,9 +28,12 @@ method: Metode
 published: Publisert
 draft: Utkast
 archived: Arkivert
+marketplace: Markedsplass
+extensions: Utvidelser
 modules: Moduler
 module_bar: Modul Bar
 logs: Logger
+unknown: Ukjent
 reset_width: Reset Width
 tile_size: Flisstørrelse
 edit_field: Rediger felt
@@ -46,6 +50,8 @@ duplicate_field: Dupliser felt
 half_width: Halv vidde
 full_width: Fullbredde
 group: Gruppe
+popular: Populær
+recent: Siste
 export_items: Eksporter produkter
 and: Og
 or: Eller
@@ -54,8 +60,33 @@ dataset_too_large_currently_showing_n_items: Datasettet er for stort. For øyebl
 modifier: Modifikator
 extension_interface: Grensesnitt
 extension_display: Visning
+extension_layout: Oppsett
+extension_module: Modul
+extension_panel: Panel
+extension_theme: Tema
 extension_hook: Hook
+extension_endpoint: Endpoint
+extension_operation: Operasjon
+extension_bundle: Pakke
+extension_layouts: Oppsett
 extension_modules: Moduler
+extension_panels: Paneler
+extension_themes: Temaer
+extension_operations: Operasjoner
+extension_bundles: Pakker
+extension_missing: Mangler
+published_relative: Publisert {relativeTime}
+homepage: Hjemmeside
+reload_page: Last inn side på nytt
+report_an_issue: Rapporter en feil
+website: Nettside
+github: GitHub
+beta: Beta
+n_downloads: '{n} nedlastinger'
+downloads: Nedlastinger
+compatibility_not_guaranteed: Kompatibilitet ikke garantert
+enable: Aktiver
+disable: Deaktiver
 custom: Egendefinert
 hook: Hook
 fill_width: Fyll vidde
@@ -80,6 +111,7 @@ requires_value: Krever verdi
 create_preset: Opprett forhåndsinnstilling
 create_panel: Opprett panel
 create_role: Opprett rolle
+create_policy: Opprett vilkår
 create_user: Opprett bruker
 message: Melding
 delete_panel: Slett panel
@@ -87,6 +119,7 @@ create_webhook: Lag Webhook
 create_custom_translation: Opprett egendefinert oversettelse
 edit_custom_translation: Rediger egendefinert oversettelse
 no_custom_translations: Ingen egendefinerte oversettelser
+no_custom_translations_copy: Det finnes ingen egendefinerte oversettelser ennå.
 invite_users: Invitere brukere
 invite: Inviter
 email_already_invited: E-postadressen "{email}" er allerede invitert
@@ -233,7 +266,6 @@ time: Tid
 timestamp: Tidsstempel
 uuid: UUID
 hash: Hash
-geometry.Point: Punkt
 not_available_for_type: Ikke tilgjengelig for denne typen
 create_translations: Lag oversettelser
 auto_refresh: Automatisk oppdatering
@@ -524,34 +556,34 @@ auto_fill: Autofyll
 corresponding_field: Tilsvarende felt
 errors:
   COLLECTION_NOT_FOUND: "Kolleksjonen eksisterer ikke"
+  CONTAINS_NULL_VALUES: Feltet inneholder nullverdier
   FIELD_NOT_FOUND: Feltet ble ikke funnet
   FORBIDDEN: Forbudt
+  ILLEGAL_ASSET_TRANSFORMATION: Bildekilden er for stor til å forhåndsvise
+  INTERNAL_SERVER_ERROR: Uventet feil
+  INVALID_CONFIG: Ugyldig konfigurasjon
   INVALID_CREDENTIALS: Feil brukernavn eller passord
+  INVALID_FOREIGN_KEY: Ugyldig fremmednøkkel
+  INVALID_IP: IP-addressen er ikke tillatt
   INVALID_OTP: Feil engangspassord
   INVALID_PAYLOAD: Invalid payload
   INVALID_QUERY: Ugyldig spørring
-  INVALID_CONFIG: Ugyldig konfigurasjon
   INVALID_TOKEN: Ugyldig nøkkel
-  INVALID_IP: IP-addressen er ikke tillatt
   INVALID_USER: Brukerautentisering mislyktes
   ITEM_LIMIT_REACHED: Elementgrense er nådd
   ITEM_NOT_FOUND: Element ikke funnet
-  ROUTE_NOT_FOUND: Ikke funnet
-  RECORD_NOT_UNIQUE: Duplikat verdi oppdaget
-  USER_SUSPENDED: Bruker Suspendert
-  CONTAINS_NULL_VALUES: Feltet inneholder nullverdier
-  INTERNAL_SERVER_ERROR: Uventet feil
-  NOT_NULL_VIOLATION: Verdien kan ikke være null
-  ILLEGAL_ASSET_TRANSFORMATION: Bildekilden er for stor til å forhåndsvise
-  VALUE_TOO_LONG: Verdien er for lang
-  VALUE_OUT_OF_RANGE: Verdien er utenfor gyldig område
-  INVALID_FOREIGN_KEY: Ugyldig fremmednøkkel
-  UNKNOWN: Uventet feil
-  SERVICE_UNAVAILABLE: Tjenesten er ikke tilgjengelig
-  UNSUPPORTED_MEDIA_TYPE: Filtypen støttes ikke
-  TOKEN_EXPIRED: Nøkkelen har utgått
   METHOD_NOT_ALLOWED: Metode ikke tillatt
+  NOT_NULL_VIOLATION: Verdien kan ikke være null
+  RECORD_NOT_UNIQUE: Duplikat verdi oppdaget
   REQUESTS_EXCEEDED: Maks antall forespørsler nådd
+  ROUTE_NOT_FOUND: Ikke funnet
+  SERVICE_UNAVAILABLE: Tjenesten er ikke tilgjengelig
+  TOKEN_EXPIRED: Nøkkelen har utgått
+  UNKNOWN: Uventet feil
+  UNSUPPORTED_MEDIA_TYPE: Filtypen støttes ikke
+  USER_SUSPENDED: Bruker Suspendert
+  VALUE_OUT_OF_RANGE: Verdien er utenfor gyldig område
+  VALUE_TOO_LONG: Verdien er for lang
 security: Sikkerhet
 value_hashed: Sikker verdi Hastet
 bookmark_name: Bokmerkenavn...
@@ -565,7 +597,6 @@ cannot_edit_global_bookmarks: Kan ikke redigere globale bokmerker
 bookmarks: Bokmerke
 presets: Forhåndsinnstillinger
 unexpected_error: Uventet feil
-unexpected_error_copy: En uventet feil oppstod, vennligst forsøk igjen.
 copy_details: Kopier detaljer
 no_app_access: Ingen app-tilgang
 no_app_access_copy: Denne brukeren har ikke tillatelse til å bruke admin appen.
@@ -590,10 +621,6 @@ make_collection_hidden: Gjør samlingen skjult
 make_folder_visible: Gjør mappen synlig
 make_folder_hidden: Skjul mappe
 goto_collection_content: Vis innhold
-start_end_of_count_items: '{start}–{end} av {count} artikler'
-start_end_of_count_filtered_items: '{start}–{end} av {count} filtrerte artikler'
-one_item: '1 element'
-one_filtered_item: '1 filtrert element'
 collections_shown: Samlinger vises
 visible_collections: Synlige samlinger
 hidden_collections: Skjulte samlinger
@@ -649,6 +676,7 @@ all: Alle
 batch_delete_confirm: >-
   Ingen elementer har blitt valgt | Er du sikker på at du vil slette dette elementet? Handlingen kan ikke angres. | Er du sikker på at du vil slette disse {count} elementene? Handlingen kan ikke angres.
 cancel: Avbryt
+source_registry: Markedsplass
 collection: Kolleksjon
 collections: Kolleksjoner
 fields:
@@ -702,6 +730,8 @@ fields:
     translation: Feltnavn oversettelser
   directus_roles:
     name: Rollenavn
+    description: Beskrivelse
+  directus_policies:
     description: Beskrivelse
   directus_webhooks:
     name: Navn
@@ -842,6 +872,8 @@ displays:
     color: Farge
     icon: Ikon
     text: Tekst
+  hash:
+    hash: Hash
   icon:
     icon: Ikon
   image:

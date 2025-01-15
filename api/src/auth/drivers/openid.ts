@@ -1,6 +1,8 @@
+import { useEnv } from '@directus/env';
 import {
 	ErrorCode,
 	InvalidCredentialsError,
+	InvalidPayloadError,
 	InvalidProviderConfigError,
 	InvalidProviderError,
 	InvalidTokenError,
@@ -15,18 +17,21 @@ import jwt from 'jsonwebtoken';
 import type { Client } from 'openid-client';
 import { errors, generators, Issuer } from 'openid-client';
 import { getAuthProvider } from '../../auth.js';
+import { REFRESH_COOKIE_OPTIONS, SESSION_COOKIE_OPTIONS } from '../../constants.js';
 import getDatabase from '../../database/index.js';
 import emitter from '../../emitter.js';
-import { useEnv } from '../../env.js';
-import { useLogger } from '../../logger.js';
+import { useLogger } from '../../logger/index.js';
 import { respond } from '../../middleware/respond.js';
+import { createDefaultAccountability } from '../../permissions/utils/create-default-accountability.js';
 import { AuthenticationService } from '../../services/authentication.js';
 import { UsersService } from '../../services/users.js';
 import type { AuthData, AuthDriverOptions, User } from '../../types/index.js';
+import type { RoleMap } from '../../types/rolemap.js';
 import asyncHandler from '../../utils/async-handler.js';
 import { getConfigFromEnv } from '../../utils/get-config-from-env.js';
 import { getIPFromReq } from '../../utils/get-ip-from-req.js';
-import { getMilliseconds } from '../../utils/get-milliseconds.js';
+import { getSecret } from '../../utils/get-secret.js';
+import { isLoginRedirectAllowed } from '../../utils/is-login-redirect-allowed.js';
 import { Url } from '../../utils/url.js';
 import { LocalAuthDriver } from './local.js';
 
@@ -35,6 +40,7 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 	redirectUrl: string;
 	usersService: UsersService;
 	config: Record<string, any>;
+	roleMap: RoleMap;
 
 	constructor(options: AuthDriverOptions, config: Record<string, any>) {
 		super(options, config);
@@ -49,7 +55,12 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 			throw new InvalidProviderConfigError({ provider: additionalConfig['provider'] });
 		}
 
-		const redirectUrl = new Url(env['PUBLIC_URL']).addPath('auth', 'login', additionalConfig['provider'], 'callback');
+		const redirectUrl = new Url(env['PUBLIC_URL'] as string).addPath(
+			'auth',
+			'login',
+			additionalConfig['provider'],
+			'callback',
+		);
 
 		const clientOptionsOverrides = getConfigFromEnv(
 			`AUTH_${config['provider'].toUpperCase()}_CLIENT_`,
@@ -60,6 +71,23 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 		this.redirectUrl = redirectUrl.toString();
 		this.usersService = new UsersService({ knex: this.knex, schema: this.schema });
 		this.config = additionalConfig;
+		this.roleMap = {};
+
+		const roleMapping = this.config['roleMapping'];
+
+		if (roleMapping) {
+			this.roleMap = roleMapping;
+		}
+
+		// role mapping will fail on login if AUTH_<provider>_ROLE_MAPPING is an array instead of an object.
+		// This happens if the 'json:' prefix is missing from the variable declaration. To save the user from exhaustive debugging, we'll try to fail early here.
+		if (roleMapping instanceof Array) {
+			logger.error(
+				"[OpenID] Expected a JSON-Object as role mapping, got an Array instead. Make sure you declare the variable with 'json:' prefix.",
+			);
+
+			throw new InvalidProviderError();
+		}
 
 		this.client = new Promise((resolve, reject) => {
 			Issuer.discover(issuerUrl)
@@ -169,10 +197,26 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 			throw handleError(e);
 		}
 
+		let role = this.config['defaultRoleId'];
+		const groupClaimName: string = this.config['groupClaimName'] ?? 'groups';
+		const groups = userInfo[groupClaimName];
+
+		if (Array.isArray(groups)) {
+			for (const key in this.roleMap) {
+				if (groups.includes(key)) {
+					// Overwrite default role if user is member of a group specified in roleMap
+					role = this.roleMap[key];
+					break;
+				}
+			}
+		} else {
+			logger.debug(`[OpenID] Configured group claim with name "${groupClaimName}" does not exist or is empty.`);
+		}
+
 		// Flatten response to support dot indexes
 		userInfo = flatten(userInfo) as Record<string, unknown>;
 
-		const { provider, identifierKey, allowPublicRegistration, requireVerifiedEmail } = this.config;
+		const { provider, identifierKey, allowPublicRegistration, requireVerifiedEmail, syncUserInfo } = this.config;
 
 		const email = userInfo['email'] ? String(userInfo['email']) : undefined;
 		// Fallback to email if explicit identifier not found
@@ -189,7 +233,7 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 			last_name: userInfo['family_name'],
 			email: email,
 			external_identifier: identifier,
-			role: this.config['defaultRoleId'],
+			role: role,
 			auth_data: tokenSet.refresh_token && JSON.stringify({ refreshToken: tokenSet.refresh_token }),
 		};
 
@@ -198,13 +242,31 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 		if (userId) {
 			// Run hook so the end user has the chance to augment the
 			// user that is about to be updated
+			let emitPayload: Record<string, unknown> = {
+				auth_data: userPayload.auth_data,
+			};
+
+			// Make sure a user's role gets updated if their openid group or role mapping changes
+			if (this.config['roleMapping']) {
+				emitPayload['role'] = role;
+			}
+
+			if (syncUserInfo) {
+				emitPayload = {
+					...emitPayload,
+					first_name: userPayload.first_name,
+					last_name: userPayload.last_name,
+					email: userPayload.email,
+				};
+			}
+
 			const updatedUserPayload = await emitter.emitFilter(
 				`auth.update`,
-				{ auth_data: userPayload.auth_data },
+				emitPayload,
 				{
 					identifier,
 					provider: this.config['provider'],
-					providerPayload: { accessToken: tokenSet.access_token, userInfo },
+					providerPayload: { accessToken: tokenSet.access_token, idToken: tokenSet.id_token, userInfo },
 				},
 				{ database: getDatabase(), schema: this.schema, accountability: null },
 			);
@@ -233,7 +295,7 @@ export class OpenIDAuthDriver extends LocalAuthDriver {
 			{
 				identifier,
 				provider: this.config['provider'],
-				providerPayload: { accessToken: tokenSet.access_token, userInfo },
+				providerPayload: { accessToken: tokenSet.access_token, idToken: tokenSet.id_token, userInfo },
 			},
 			{ database: getDatabase(), schema: this.schema, accountability: null },
 		);
@@ -315,7 +377,6 @@ const handleError = (e: any) => {
 
 export function createOpenIDAuthRouter(providerName: string): Router {
 	const env = useEnv();
-
 	const router = Router();
 
 	router.get(
@@ -324,15 +385,16 @@ export function createOpenIDAuthRouter(providerName: string): Router {
 			const provider = getAuthProvider(providerName) as OpenIDAuthDriver;
 			const codeVerifier = provider.generateCodeVerifier();
 			const prompt = !!req.query['prompt'];
+			const redirect = req.query['redirect'];
 
-			const token = jwt.sign(
-				{ verifier: codeVerifier, redirect: req.query['redirect'], prompt },
-				env['SECRET'] as string,
-				{
-					expiresIn: '5m',
-					issuer: 'directus',
-				},
-			);
+			if (isLoginRedirectAllowed(redirect, providerName) === false) {
+				throw new InvalidPayloadError({ reason: `URL "${redirect}" can't be used to redirect after login` });
+			}
+
+			const token = jwt.sign({ verifier: codeVerifier, redirect, prompt }, getSecret(), {
+				expiresIn: (env[`AUTH_${providerName.toUpperCase()}_LOGIN_TIMEOUT`] ?? '5m') as string,
+				issuer: 'directus',
+			});
 
 			res.cookie(`openid.${providerName}`, token, {
 				httpOnly: true,
@@ -361,7 +423,7 @@ export function createOpenIDAuthRouter(providerName: string): Router {
 			let tokenData;
 
 			try {
-				tokenData = jwt.verify(req.cookies[`openid.${providerName}`], env['SECRET'] as string, {
+				tokenData = jwt.verify(req.cookies[`openid.${providerName}`], getSecret(), {
 					issuer: 'directus',
 				}) as {
 					verifier: string;
@@ -375,12 +437,9 @@ export function createOpenIDAuthRouter(providerName: string): Router {
 
 			const { verifier, redirect, prompt } = tokenData;
 
-			const accountability: Accountability = {
-				ip: getIPFromReq(req),
-				role: null,
-			};
+			const accountability: Accountability = createDefaultAccountability({ ip: getIPFromReq(req) });
 
-			const userAgent = req.get('user-agent');
+			const userAgent = req.get('user-agent')?.substring(0, 1024);
 			if (userAgent) accountability.userAgent = userAgent;
 
 			const origin = req.get('origin');
@@ -391,17 +450,23 @@ export function createOpenIDAuthRouter(providerName: string): Router {
 				schema: req.schema,
 			});
 
+			const authMode = (env[`AUTH_${providerName.toUpperCase()}_MODE`] ?? 'session') as string;
+
 			let authResponse;
 
 			try {
 				res.clearCookie(`openid.${providerName}`);
 
-				authResponse = await authenticationService.login(providerName, {
-					code: req.query['code'],
-					codeVerifier: verifier,
-					state: req.query['state'],
-					iss: req.query['iss'],
-				});
+				authResponse = await authenticationService.login(
+					providerName,
+					{
+						code: req.query['code'],
+						codeVerifier: verifier,
+						state: req.query['state'],
+						iss: req.query['iss'],
+					},
+					{ session: authMode === 'session' },
+				);
 			} catch (error: any) {
 				// Prompt user for a new refresh_token if invalidated
 				if (isDirectusError(error, ErrorCode.InvalidToken) && !prompt) {
@@ -429,13 +494,11 @@ export function createOpenIDAuthRouter(providerName: string): Router {
 			const { accessToken, refreshToken, expires } = authResponse;
 
 			if (redirect) {
-				res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'], refreshToken, {
-					httpOnly: true,
-					domain: env['REFRESH_TOKEN_COOKIE_DOMAIN'],
-					maxAge: getMilliseconds(env['REFRESH_TOKEN_TTL']),
-					secure: env['REFRESH_TOKEN_COOKIE_SECURE'] ?? false,
-					sameSite: (env['REFRESH_TOKEN_COOKIE_SAME_SITE'] as 'lax' | 'strict' | 'none') || 'strict',
-				});
+				if (authMode === 'session') {
+					res.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+				} else {
+					res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+				}
 
 				return res.redirect(redirect);
 			}

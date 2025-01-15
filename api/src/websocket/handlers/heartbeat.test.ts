@@ -14,7 +14,7 @@ vi.mock('../controllers', () => ({
 
 // This is required because logger uses global env which is imported before the tests run. Can be
 // reduce to just mock the file when logger is also using useLogger everywhere @TODO
-vi.mock('../../env.js', () => ({
+vi.mock('@directus/env', () => ({
 	useEnv: vi.fn().mockReturnValue({
 		WEBSOCKETS_ENABLED: true,
 		WEBSOCKETS_REST_ENABLED: true,
@@ -26,8 +26,11 @@ vi.mock('../../env.js', () => ({
 		WEBSOCKETS_GRAPHQL_AUTH_TIMEOUT: 10,
 		WEBSOCKETS_GRAPHQL_PATH: '/graphql',
 		WEBSOCKETS_HEARTBEAT_ENABLED: true,
-
 		WEBSOCKETS_HEARTBEAT_PERIOD: 1,
+		WEBSOCKETS_LOGS_ENABLED: true,
+		WEBSOCKETS_LOGS_AUTH: 'handshake',
+		WEBSOCKETS_LOGS_AUTH_TIMEOUT: 10,
+		WEBSOCKETS_LOGS_PATH: '/logs',
 	}),
 }));
 

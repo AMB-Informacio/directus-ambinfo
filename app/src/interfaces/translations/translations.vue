@@ -1,21 +1,19 @@
 <script setup lang="ts">
-import VDivider from '@/components/v-divider.vue';
-import VForm from '@/components/v-form/v-form.vue';
 import VIcon from '@/components/v-icon/v-icon.vue';
 import { useRelationM2M } from '@/composables/use-relation-m2m';
 import { DisplayItem, RelationQueryMultiple, useRelationMultiple } from '@/composables/use-relation-multiple';
-import { useRelationPermissionsM2M } from '@/composables/use-relation-permissions';
 import { useWindowSize } from '@/composables/use-window-size';
+import { useInjectNestedValidation } from '@/composables/use-nested-validation';
 import vTooltip from '@/directives/tooltip';
 import { useFieldsStore } from '@/stores/fields';
-import { usePermissionsStore } from '@/stores/permissions';
 import { fetchAll } from '@/utils/fetch-all';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { cloneDeep, isNil } from 'lodash';
+import { getEndpoint } from '@directus/utils';
+import { isNil } from 'lodash';
 import { computed, ref, toRefs, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import LanguageSelect from './language-select.vue';
-import { getEndpoint } from '@directus/utils';
+import TranslationForm from './translation-form.vue';
+import { validateItem } from '@/utils/validate-item';
 
 const props = withDefaults(
 	defineProps<{
@@ -25,8 +23,9 @@ const props = withDefaults(
 		languageField?: string | null;
 		languageDirectionField?: string | null;
 		defaultLanguage?: string | null;
+		defaultOpenSplitView?: boolean;
 		userLanguage?: boolean;
-		value: (number | string | Record<string, any>)[] | Record<string, any>;
+		value: (number | string | Record<string, any>)[] | Record<string, any> | null;
 		autofocus?: boolean;
 		disabled?: boolean;
 	}>(),
@@ -37,6 +36,7 @@ const props = withDefaults(
 		autofocus: false,
 		disabled: false,
 		defaultLanguage: null,
+		defaultOpenSplitView: false,
 		userLanguage: false,
 	},
 );
@@ -44,7 +44,7 @@ const props = withDefaults(
 const emit = defineEmits(['input']);
 
 const value = computed({
-	get: () => props.value,
+	get: () => props.value ?? [],
 	set: (val) => {
 		emit('input', val);
 	},
@@ -55,58 +55,45 @@ const { relationInfo } = useRelationM2M(collection, field);
 const { t, locale } = useI18n();
 
 const fieldsStore = useFieldsStore();
-const permissionsStore = usePermissionsStore();
 
 const { width } = useWindowSize();
 
-const splitView = ref(false);
+const splitView = ref(props.defaultOpenSplitView);
 const firstLang = ref<string>();
 const secondLang = ref<string>();
 
 watch(splitView, (splitViewEnabled) => {
-	const lang = languageOptions.value;
-
-	if (splitViewEnabled && secondLang.value === firstLang.value) {
-		secondLang.value = lang[0].value === firstLang.value ? lang[1].value : lang[0].value;
+	if (splitViewEnabled) {
+		const lang = languageOptions.value;
+		const alternativeLang = lang.find((l) => l.value !== firstLang.value);
+		secondLang.value = alternativeLang?.value ?? lang[0]?.value;
 	}
 });
 
-const { languageOptions } = useLanguages();
+const { languageOptions, loading: languagesLoading } = useLanguages();
+
+const splitViewAvailable = computed(() => width.value > 960 && languageOptions.value.length > 1);
+const splitViewEnabled = computed(() => splitViewAvailable.value && splitView.value);
 
 const fields = computed(() => {
 	if (!relationInfo.value) return [];
 	return fieldsStore.getFieldsForCollection(relationInfo.value.junctionCollection.collection);
 });
 
-const query = ref<RelationQueryMultiple>({
-	fields: ['*'],
-	limit: -1,
-	page: 1,
-});
+const query = ref<RelationQueryMultiple>({ fields: ['*'], limit: -1, page: 1 });
 
-const { create, update, displayItems, loading, fetchedItems, getItemEdits } = useRelationMultiple(
-	value,
-	query,
-	relationInfo,
-	primaryKey,
-);
+const {
+	create,
+	update,
+	remove,
+	isLocalItem,
+	displayItems,
+	loading: itemsLoading,
+	fetchedItems,
+	getItemEdits,
+} = useRelationMultiple(value, query, relationInfo, primaryKey);
 
-const firstItem = computed(() => {
-	const item = getItemWithLang(displayItems.value, firstLang.value);
-	if (item === undefined) return undefined;
-
-	return getItemEdits(item);
-});
-
-const secondItem = computed(() => {
-	const item = getItemWithLang(displayItems.value, secondLang.value);
-	if (item === undefined) return undefined;
-
-	return getItemEdits(item);
-});
-
-const firstItemInitial = computed(() => getItemWithLang(fetchedItems.value, firstLang.value));
-const secondItemInitial = computed(() => getItemWithLang(fetchedItems.value, secondLang.value));
+useNestedValidation();
 
 function getItemWithLang<T extends Record<string, any>>(items: T[], lang: string | undefined) {
 	const langField = relationInfo.value?.junctionField.field;
@@ -116,7 +103,7 @@ function getItemWithLang<T extends Record<string, any>>(items: T[], lang: string
 	return items.find((item) => item?.[langField]?.[relatedPKField] === lang);
 }
 
-function updateValue(item: DisplayItem, lang: string | undefined) {
+function updateValue(item: DisplayItem | undefined, lang: string | undefined) {
 	const info = relationInfo.value;
 	if (!info) return;
 
@@ -150,22 +137,26 @@ function updateValue(item: DisplayItem, lang: string | undefined) {
 	}
 }
 
-const splitViewAvailable = computed(() => {
-	return width.value > 960 && languageOptions.value.length > 1;
-});
-
-const splitViewEnabled = computed(() => {
-	return splitViewAvailable.value && splitView.value;
-});
-
-const showLanguageSelect = computed(() => {
-	return languageOptions.value.length > 1;
-});
+const translationProps = computed(() => ({
+	languageOptions: languageOptions.value,
+	disabled: props.disabled,
+	autofocus: props.autofocus,
+	relationInfo: relationInfo.value,
+	getItemWithLang,
+	loading: languagesLoading.value || itemsLoading.value,
+	displayItems: displayItems.value,
+	fetchedItems: fetchedItems.value,
+	getItemEdits,
+	isLocalItem,
+	updateValue,
+	remove,
+}));
 
 function useLanguages() {
 	const languages = ref<Record<string, any>[]>([]);
 	const loading = ref(false);
 	const error = ref<any>(null);
+	const fieldsStore = useFieldsStore();
 
 	watch(relationInfo, fetchLanguages, { immediate: true });
 
@@ -208,31 +199,30 @@ function useLanguages() {
 		if (!relationInfo.value) return;
 
 		const fields = new Set<string>();
+		const collection = relationInfo.value.relatedCollection.collection;
 
-		if (props.languageField !== null) {
+		if (props.languageField !== null && fieldsStore.getField(collection, props.languageField)) {
 			fields.add(props.languageField);
 		}
 
-		if (props.languageDirectionField !== null) {
+		if (props.languageDirectionField !== null && fieldsStore.getField(collection, props.languageDirectionField)) {
 			fields.add(props.languageDirectionField);
 		}
 
 		const pkField = relationInfo.value.relatedPrimaryKeyField.field;
+		const sortField = relationInfo.value.relatedCollection.meta?.sort_field;
 
 		fields.add(pkField);
 
 		loading.value = true;
 
 		try {
-			languages.value = await fetchAll<Record<string, any>[]>(
-				getEndpoint(relationInfo.value.relatedCollection.collection),
-				{
-					params: {
-						fields: Array.from(fields),
-						sort: props.languageField ?? pkField,
-					},
+			languages.value = await fetchAll<Record<string, any>[]>(getEndpoint(collection), {
+				params: {
+					fields: Array.from(fields),
+					sort: sortField ?? props.languageField ?? pkField,
 				},
-			);
+			});
 
 			if (!firstLang.value) {
 				const userLocale = userLanguage.value ? locale.value : defaultLanguage.value;
@@ -241,7 +231,14 @@ function useLanguages() {
 			}
 
 			if (!secondLang.value) {
-				secondLang.value = languages.value[1]?.[pkField];
+				const defaultLocale = userLanguage.value ? defaultLanguage.value : null;
+				let lang = languages.value.find((lang) => lang[pkField] === defaultLocale) || languages.value[0];
+
+				if (!lang || lang[pkField] === firstLang.value) {
+					lang = languages.value.find((lang) => lang[pkField] !== firstLang.value) || languages.value[1];
+				}
+
+				secondLang.value = lang?.[pkField];
 			}
 		} catch (error) {
 			unexpectedError(error);
@@ -251,164 +248,102 @@ function useLanguages() {
 	}
 }
 
-const { junctionPerms } = useRelationPermissionsM2M(relationInfo);
+function useNestedValidation() {
+	const { updateNestedValidationErrors } = useInjectNestedValidation();
 
-const createAllowed = computed(() => junctionPerms.value.create);
-const updateAllowed = computed(() => junctionPerms.value.update);
+	watch(
+		() => displayItems.value,
+		(updatedDisplayItems) => {
+			const errorsMap = getErrorsPerLanguage(updatedDisplayItems);
 
-const firstItemNew = computed(
-	() => relationInfo.value && firstItemInitial.value?.[relationInfo.value.junctionPrimaryKeyField.field] === undefined,
-);
+			const validationErrors = Object.entries(errorsMap)?.flatMap(([lang, items]) =>
+				items.map((item: Record<string, any>) => updateFieldName(item, lang)),
+			);
 
-const secondItemNew = computed(
-	() => relationInfo.value && secondItemInitial.value?.[relationInfo.value.junctionPrimaryKeyField.field] === undefined,
-);
-
-const firstChangesAllowed = computed(() => {
-	if (firstItemNew.value) {
-		return updateAllowed.value;
-	}
-
-	return createAllowed.value;
-});
-
-const secondChangesAllowed = computed(() => {
-	if (secondItemNew.value) {
-		return updateAllowed.value;
-	}
-
-	return createAllowed.value;
-});
-
-const firstFields = computed(() => {
-	let fieldsWithPerms = cloneDeep(fields.value);
-	if (!relationInfo.value) return fieldsWithPerms;
-
-	const permissions = permissionsStore.getPermissionsForUser(
-		relationInfo.value.junctionCollection.collection,
-		firstItemNew.value ? 'create' : 'update',
+			updateNestedValidationErrors(props.field, validationErrors);
+		},
 	);
 
-	if (!permissions) return fieldsWithPerms;
+	function getErrorsPerLanguage(updatedDisplayItems: DisplayItem[]) {
+		const errorsMap: Record<string, any> = {};
 
-	if (permissions.fields?.includes('*') === false) {
-		fieldsWithPerms = fieldsWithPerms.map((field) => {
-			if (permissions.fields?.includes(field.field) === false) {
-				field.meta = {
-					...(field.meta || {}),
-					readonly: true,
-				} as any;
-			}
+		updatedDisplayItems?.forEach((item) => {
+			const langField = relationInfo.value?.junctionField.field;
+			const relatedPKField = relationInfo.value?.relatedPrimaryKeyField.field;
+			if (!langField || !relatedPKField) return;
 
-			return field;
+			const lang = item?.[langField]?.[relatedPKField];
+			if (!lang) return;
+
+			const errorsPerLanguage = validateItem(item, fields.value, item.$type === 'created', true);
+			if (!errorsPerLanguage?.length) return;
+
+			errorsMap[lang] = errorsPerLanguage.map((error) => addNestedProperties(error, lang));
 		});
+
+		return errorsMap;
 	}
 
-	return fieldsWithPerms;
-});
+	function addNestedProperties(error: any, lang: string) {
+		const field = fields.value?.find((field) => field.field === error.field);
 
-const secondFields = computed(() => {
-	let fieldsWithPerms = cloneDeep(fields.value);
-	if (!relationInfo.value) return fieldsWithPerms;
+		const nestedNames = {
+			[lang]: languageOptions.value.find((langOption) => langOption.value === lang)?.text ?? lang,
+			[error.field]: field?.name ?? error.field,
+		};
 
-	const permissions = permissionsStore.getPermissionsForUser(
-		relationInfo.value.junctionCollection.collection,
-		secondItemNew.value ? 'create' : 'update',
-	);
+		const validation_message = field?.meta?.validation_message;
 
-	if (!permissions) return fieldsWithPerms;
-
-	if (permissions.fields?.includes('*') === false) {
-		fieldsWithPerms = fieldsWithPerms.map((field) => {
-			if (permissions.fields?.includes(field.field) === false) {
-				field.meta = {
-					...(field.meta || {}),
-					readonly: true,
-				} as any;
-			}
-
-			return field;
-		});
+		return { ...error, nestedNames, validation_message };
 	}
 
-	return fieldsWithPerms;
-});
+	function updateFieldName(item: Record<string, any>, lang: string) {
+		return { ...item, field: `${props.field}.${lang}.${item.field}` };
+	}
+}
 </script>
 
 <template>
 	<div class="translations" :class="{ split: splitViewEnabled }">
-		<div class="primary" :class="splitViewEnabled ? 'half' : 'full'">
-			<language-select v-if="showLanguageSelect" v-model="firstLang" :items="languageOptions">
-				<template #append>
-					<v-icon
-						v-if="splitViewAvailable && !splitViewEnabled"
-						v-tooltip="t('interfaces.translations.toggle_split_view')"
-						name="flip"
-						clickable
-						@click.stop="splitView = true"
-					/>
-				</template>
-			</language-select>
-			<v-form
-				v-if="languageOptions.find((lang) => lang.value === firstLang)"
-				:key="languageOptions.find((lang) => lang.value === firstLang)?.value"
-				:primary-key="
-					relationInfo?.junctionPrimaryKeyField.field
-						? firstItemInitial?.[relationInfo?.junctionPrimaryKeyField.field]
-						: null
-				"
-				:disabled="disabled || !firstChangesAllowed"
-				:loading="loading"
-				:fields="firstFields"
-				:model-value="firstItem"
-				:initial-values="firstItemInitial"
-				:badge="languageOptions.find((lang) => lang.value === firstLang)?.text"
-				:direction="languageOptions.find((lang) => lang.value === firstLang)?.direction"
-				:autofocus="autofocus"
-				inline
-				@update:model-value="updateValue($event, firstLang)"
-			/>
-			<v-divider />
-		</div>
-		<div v-if="splitViewEnabled" class="secondary" :class="splitViewEnabled ? 'half' : 'full'">
-			<language-select v-model="secondLang" :items="languageOptions" secondary>
-				<template #append>
-					<v-icon
-						v-tooltip="t('interfaces.translations.toggle_split_view')"
-						name="close"
-						clickable
-						@click.stop="splitView = !splitView"
-					/>
-				</template>
-			</language-select>
-			<v-form
-				v-if="languageOptions.find((lang) => lang.value === secondLang)"
-				:key="languageOptions.find((lang) => lang.value === secondLang)?.value"
-				:primary-key="
-					relationInfo?.junctionPrimaryKeyField.field
-						? secondItemInitial?.[relationInfo?.junctionPrimaryKeyField.field]
-						: null
-				"
-				:disabled="disabled || !secondChangesAllowed"
-				:loading="loading"
-				:initial-values="secondItemInitial"
-				:fields="secondFields"
-				:badge="languageOptions.find((lang) => lang.value === secondLang)?.text"
-				:direction="languageOptions.find((lang) => lang.value === secondLang)?.direction"
-				:model-value="secondItem"
-				inline
-				@update:model-value="updateValue($event, secondLang)"
-			/>
-			<v-divider />
-		</div>
+		<translation-form v-model:lang="firstLang" v-bind="translationProps" :class="splitViewEnabled ? 'half' : 'full'">
+			<template #split-view="{ active, toggle }">
+				<v-icon
+					v-if="splitViewAvailable && !splitViewEnabled"
+					v-tooltip="t('interfaces.translations.toggle_split_view')"
+					name="flip"
+					clickable
+					@click.stop="
+						if (active) toggle();
+						splitView = true;
+					"
+				/>
+			</template>
+		</translation-form>
+
+		<translation-form
+			v-if="splitViewEnabled"
+			v-model:lang="secondLang"
+			v-bind="translationProps"
+			secondary
+			class="half"
+		>
+			<template #split-view>
+				<v-icon
+					v-tooltip="t('interfaces.translations.toggle_split_view')"
+					name="flip"
+					clickable
+					@click="splitView = false"
+				/>
+			</template>
+		</translation-form>
 	</div>
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .translations {
-	@include form-grid;
+	@include mixins.form-grid;
 
 	.v-form {
 		--theme--form--row-gap: 32px;

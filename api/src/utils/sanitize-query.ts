@@ -1,8 +1,9 @@
-import type { Accountability, Aggregate, Filter, Query } from '@directus/types';
+import { useEnv } from '@directus/env';
+import { InvalidQueryError } from '@directus/errors';
+import type { Accountability, Aggregate, Query } from '@directus/types';
 import { parseFilter, parseJSON } from '@directus/utils';
 import { flatten, get, isPlainObject, merge, set } from 'lodash-es';
-import { useEnv } from '../env.js';
-import { useLogger } from '../logger.js';
+import { useLogger } from '../logger/index.js';
 import { Meta } from '../types/index.js';
 
 export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Accountability | null): Query {
@@ -64,6 +65,11 @@ export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Ac
 
 	if (rawQuery['version']) {
 		query.version = rawQuery['version'];
+
+		// whether or not to merge the relational results
+		query.versionRaw = Boolean(
+			'versionRaw' in rawQuery && (rawQuery['versionRaw'] === '' || rawQuery['versionRaw'] === 'true'),
+		);
 	}
 
 	if (rawQuery['export']) {
@@ -119,7 +125,7 @@ function sanitizeAggregate(rawAggregate: any): Aggregate {
 		try {
 			aggregate = parseJSON(rawAggregate);
 		} catch {
-			logger.warn('Invalid value passed for filter query parameter.');
+			logger.warn('Invalid value passed for aggregate query parameter.');
 		}
 	}
 
@@ -132,19 +138,21 @@ function sanitizeAggregate(rawAggregate: any): Aggregate {
 }
 
 function sanitizeFilter(rawFilter: any, accountability: Accountability | null) {
-	const logger = useLogger();
+	let filters = rawFilter;
 
-	let filters: Filter | null = rawFilter;
-
-	if (typeof rawFilter === 'string') {
+	if (typeof filters === 'string') {
 		try {
-			filters = parseJSON(rawFilter);
+			filters = parseJSON(filters);
 		} catch {
-			logger.warn('Invalid value passed for filter query parameter.');
+			throw new InvalidQueryError({ reason: 'Invalid JSON for filter object' });
 		}
 	}
 
-	return parseFilter(filters, accountability);
+	try {
+		return parseFilter(filters, accountability);
+	} catch {
+		throw new InvalidQueryError({ reason: 'Invalid filter object' });
+	}
 }
 
 function sanitizeLimit(rawLimit: any) {
@@ -231,7 +239,7 @@ function sanitizeAlias(rawAlias: any) {
 	if (typeof rawAlias === 'string') {
 		try {
 			alias = parseJSON(rawAlias);
-		} catch (err) {
+		} catch {
 			logger.warn('Invalid value passed for alias query parameter.');
 		}
 	}

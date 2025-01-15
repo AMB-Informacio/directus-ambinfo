@@ -1,8 +1,10 @@
-import BaseAttachesTool from '@editorjs/attaches';
-import BaseImageTool from '@editorjs/image';
 import { unexpectedError } from '@/utils/unexpected-error';
+import BaseAttachesTool from '@editorjs/attaches';
+import { MenuConfig } from '@editorjs/editorjs/types/tools';
+import BaseImageTool from '@editorjs/image';
+import { useBus } from './bus';
 
-/**
+/*
  * This file is a modified version of the attaches and image tool from editorjs to work with the Directus file manager.
  *
  * We include an uploader to directly use Directus file manager, along with a modified version of the attaches and image tools.
@@ -60,9 +62,8 @@ class Uploader {
 			const currentPreview = this.getCurrentFile();
 
 			if (currentPreview) {
-				this.config.uploader.setCurrentPreview(
-					this.config.uploader.addTokenToURL(currentPreview) + '&key=system-large-contain',
-				);
+				const separator = currentPreview.includes('?') ? '&' : '?';
+				this.config.uploader.setCurrentPreview(`${currentPreview}${separator}key=system-large-contain`);
 			}
 		}
 
@@ -92,7 +93,7 @@ class Uploader {
 					},
 				};
 
-				onPreview(this.config.uploader.addTokenToURL(response.file.fileURL));
+				onPreview(response.file.fileURL);
 				this.onUpload(response);
 			},
 		);
@@ -131,13 +132,14 @@ export class AttachesTool extends BaseAttachesTool {
 			const downloadButton = this.nodes.wrapper.querySelector('a.cdx-attaches__download-button');
 
 			if (downloadButton) {
-				downloadButton.href = this.config.uploader.addTokenToURL(this.data.file.url) + '&download';
+				const separator = this.data.file.url.includes('?') ? '&' : '?';
+				downloadButton.href = `${this.data.file.url}${separator}download`;
 			}
 		}
 	}
 }
 
-export class ImageTool extends BaseImageTool {
+export class ImageTool extends (BaseImageTool as any) {
 	constructor(params: any) {
 		super(params);
 
@@ -151,10 +153,20 @@ export class ImageTool extends BaseImageTool {
 
 	set image(file: { url?: any }) {
 		this._data.file = file || {};
+		if (file?.url) this.ui.fillImage(file.url);
+	}
 
-		if (file && file.url) {
-			const imageUrl = this.config.uploader.addTokenToURL(file.url) + '&key=system-large-contain';
-			this.ui.fillImage(imageUrl);
-		}
+	renderSettings() {
+		const openImageItem: MenuConfig = {
+			icon: '<i>open_in_new</i>',
+			title: 'Open Image',
+			toggle: false,
+			onActivate: () => {
+				const bus = useBus();
+				bus.emit({ type: 'open-url', payload: this.data.file.fileURL });
+			},
+		};
+
+		return [openImageItem, ...super.renderSettings()];
 	}
 }

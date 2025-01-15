@@ -6,7 +6,6 @@ import type {
 } from '@directus/extensions';
 import {
 	EXTENSION_LANGUAGES,
-	EXTENSION_NAME_REGEX,
 	EXTENSION_PKG_KEY,
 	EXTENSION_TYPES,
 	ExtensionManifest,
@@ -79,7 +78,7 @@ export default async function add(options: AddOptions): Promise<void> {
 				type: 'list',
 				name: 'type',
 				message: 'Choose the extension type',
-				choices: EXTENSION_TYPES,
+				choices: () => EXTENSION_TYPES.filter((e) => e !== 'bundle'),
 			},
 			{
 				type: 'input',
@@ -175,21 +174,17 @@ export default async function add(options: AddOptions): Promise<void> {
 			process.exit(1);
 		}
 
-		const oldName = extensionManifest.name.match(EXTENSION_NAME_REGEX)?.[1] ?? extensionManifest.name;
-
-		const { type, name, language, convertName, extensionName, alternativeSource } = await inquirer.prompt<{
+		const { type, name, language, convertName } = await inquirer.prompt<{
 			type: NestedExtensionType;
 			name: string;
 			language: Language;
 			convertName: string;
-			extensionName: string;
-			alternativeSource?: string;
 		}>([
 			{
 				type: 'list',
 				name: 'type',
 				message: 'Choose the extension type',
-				choices: EXTENSION_TYPES,
+				choices: () => EXTENSION_TYPES.filter((e) => e !== 'bundle'),
 			},
 			{
 				type: 'input',
@@ -207,14 +202,20 @@ export default async function add(options: AddOptions): Promise<void> {
 				type: 'input',
 				name: 'convertName',
 				message: 'Choose a name for the extension that is converted to an entry',
-				default: oldName,
+				default: extensionManifest.name,
 				validate: (name: string) => (name.length === 0 ? 'Entry name can not be empty.' : true),
 			},
+		]);
+
+		const { extensionName, alternativeSource } = await inquirer.prompt<{
+			extensionName: string;
+			alternativeSource?: string;
+		}>([
 			{
 				type: 'input',
 				name: 'extensionName',
 				message: 'Choose a name for the extension',
-				default: ({ convertName }: { convertName: string }) => (convertName !== oldName ? oldName : null),
+				...(convertName !== extensionManifest.name && { default: extensionManifest.name }),
 				validate: (name: string) => (name.length === 0 ? 'Extension name can not be empty.' : true),
 			},
 			{
@@ -285,8 +286,8 @@ export default async function add(options: AddOptions): Promise<void> {
 
 		const newExtensionManifest = {
 			...extensionManifest,
-			name: EXTENSION_NAME_REGEX.test(extensionName) ? extensionName : `directus-extension-${extensionName}`,
-			keywords: ['directus', 'directus-extension', `directus-custom-bundle`],
+			name: extensionName,
+			keywords: ['directus', 'directus-extension', 'directus-extension-bundle'],
 			[EXTENSION_PKG_KEY]: newExtensionOptions,
 			devDependencies: {
 				...extensionManifest.devDependencies,

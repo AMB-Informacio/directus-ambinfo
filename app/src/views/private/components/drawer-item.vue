@@ -3,6 +3,7 @@ import api from '@/api';
 import { useEditsGuard } from '@/composables/use-edits-guard';
 import { usePermissions } from '@/composables/use-permissions';
 import { useTemplateData } from '@/composables/use-template-data';
+import { useNestedValidation } from '@/composables/use-nested-validation';
 import { useFieldsStore } from '@/stores/fields';
 import { useRelationsStore } from '@/stores/relations';
 import { getDefaultValuesFromFields } from '@/utils/get-default-values-from-fields';
@@ -10,24 +11,25 @@ import { unexpectedError } from '@/utils/unexpected-error';
 import { validateItem } from '@/utils/validate-item';
 import FilePreviewReplace from '@/views/private/components/file-preview-replace.vue';
 import { useCollection } from '@directus/composables';
-import { Field, Relation } from '@directus/types';
+import { isSystemCollection } from '@directus/system-data';
+import { Field, PrimaryKey, Relation } from '@directus/types';
 import { getEndpoint } from '@directus/utils';
 import { isEmpty, merge, set } from 'lodash';
-import { computed, ref, toRefs, watch } from 'vue';
+import { Ref, computed, ref, toRefs, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 
 interface Props {
 	collection: string;
 	active?: boolean;
-	primaryKey?: string | number | null;
+	primaryKey?: PrimaryKey | null;
 	edits?: Record<string, any>;
 	junctionField?: string | null;
 	disabled?: boolean;
 	// There's an interesting case where the main form can be a newly created item ('+'), while
 	// it has a pre-selected related item it needs to alter. In that case, we have to fetch the
 	// related data anyway.
-	relatedPrimaryKey?: string | number;
+	relatedPrimaryKey?: PrimaryKey;
 	// If this drawer-item is opened from a relational interface, we need to force-block the field
 	// that relates back to the parent item.
 	circularField?: string | null;
@@ -62,7 +64,7 @@ const { junctionFieldInfo, relatedCollection, relatedCollectionInfo, setRelation
 const { internalEdits, loading, initialValues, refresh } = useItem();
 const { save, cancel } = useActions();
 
-const { collection } = toRefs(props);
+const { collection, primaryKey, relatedPrimaryKey } = toRefs(props);
 
 const { info: collectionInfo, primaryKeyField } = useCollection(collection);
 
@@ -101,16 +103,20 @@ const title = computed(() => {
 		: t('editing_in', { collection: collection.name });
 });
 
-const { fields: relatedCollectionFields } = usePermissions(
-	relatedCollection as any,
-	computed(() => initialValues.value && initialValues.value[props.junctionField as any]),
+const {
+	itemPermissions: { fields: fieldsWithPermissions, saveAllowed },
+} = usePermissions(
+	collection,
+	primaryKey,
 	computed(() => props.primaryKey === '+'),
 );
 
-const { fields: fieldsWithPermissions } = usePermissions(
-	collection,
-	initialValues,
-	computed(() => props.primaryKey === '+'),
+const {
+	itemPermissions: { fields: relatedCollectionFields, saveAllowed: saveRelatedCollectionAllowed },
+} = usePermissions(
+	relatedCollection as Ref<string>,
+	relatedPrimaryKey,
+	computed(() => props.relatedPrimaryKey === '+'),
 );
 
 const fields = computed(() => {
@@ -150,11 +156,18 @@ const templatePrimaryKey = computed(() =>
 );
 
 const templateCollection = computed(() => relatedCollectionInfo.value || collectionInfo.value);
-const { templateData, loading: templateDataLoading } = useTemplateData(templateCollection, templatePrimaryKey);
 
-const template = computed(
-	() => relatedCollectionInfo.value?.meta?.display_template || collectionInfo.value?.meta?.display_template || null,
-);
+const isSavable = computed(() => {
+	if (props.disabled) return false;
+	if (!relatedCollection.value) return saveAllowed.value;
+	return saveAllowed.value || saveRelatedCollectionAllowed.value;
+});
+
+const {
+	template,
+	templateData,
+	loading: templateDataLoading,
+} = useTemplateData(templateCollection, templatePrimaryKey);
 
 const { file } = useFile();
 
@@ -228,7 +241,7 @@ function useItem() {
 
 		const baseEndpoint = getEndpoint(props.collection);
 
-		const endpoint = props.collection.startsWith('directus_')
+		const endpoint = isSystemCollection(props.collection)
 			? `${baseEndpoint}/${props.primaryKey}`
 			: `${baseEndpoint}/${encodeURIComponent(props.primaryKey)}`;
 
@@ -258,7 +271,7 @@ function useItem() {
 
 		const baseEndpoint = getEndpoint(collection);
 
-		const endpoint = collection.startsWith('directus_')
+		const endpoint = isSystemCollection(collection)
 			? `${baseEndpoint}/${props.relatedPrimaryKey}`
 			: `${baseEndpoint}/${encodeURIComponent(props.relatedPrimaryKey)}`;
 
@@ -320,6 +333,12 @@ function useRelation() {
 }
 
 function useActions() {
+	const { nestedValidationErrors, resetNestedValidationErrors } = useNestedValidation();
+
+	watch(internalActive, (active) => {
+		if (!active) resetNestedValidationErrors();
+	});
+
 	return { save, cancel };
 
 	function save() {
@@ -333,6 +352,8 @@ function useActions() {
 			fieldsToValidate,
 			isNew.value,
 		);
+
+		if (nestedValidationErrors.value?.length) errors.push(...nestedValidationErrors.value);
 
 		if (errors.length > 0) {
 			validationErrors.value = errors;
@@ -389,7 +410,7 @@ function useActions() {
 
 		<template #actions>
 			<slot name="actions" />
-			<v-button v-tooltip.bottom="t('save')" icon rounded @click="save">
+			<v-button v-tooltip.bottom="t('save')" icon rounded :disabled="!isSavable" @click="save">
 				<v-icon name="check" />
 			</v-button>
 		</template>

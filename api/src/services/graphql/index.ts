@@ -1,7 +1,18 @@
-import { Action, FUNCTIONS } from '@directus/constants';
+import { FUNCTIONS } from '@directus/constants';
+import { useEnv } from '@directus/env';
 import { ErrorCode, ForbiddenError, InvalidPayloadError, isDirectusError, type DirectusError } from '@directus/errors';
-import type { Accountability, Aggregate, Filter, PrimaryKey, Query, SchemaOverview } from '@directus/types';
-import { parseFilterFunctionPath } from '@directus/utils';
+import { isSystemCollection } from '@directus/system-data';
+import type {
+	Accountability,
+	Aggregate,
+	CollectionAccess,
+	Filter,
+	Item,
+	PrimaryKey,
+	Query,
+	SchemaOverview,
+} from '@directus/types';
+import { parseFilterFunctionPath, toBoolean } from '@directus/utils';
 import argon2 from 'argon2';
 import type {
 	ArgumentNode,
@@ -43,21 +54,33 @@ import type {
 } from 'graphql-compose';
 import { GraphQLJSON, InputTypeComposer, ObjectTypeComposer, SchemaComposer, toInputObjectType } from 'graphql-compose';
 import type { Knex } from 'knex';
-import { assign, flatten, get, mapKeys, merge, omit, pick, set, transform, uniq } from 'lodash-es';
+import { flatten, get, mapKeys, merge, omit, pick, set, transform, uniq } from 'lodash-es';
 import { clearSystemCache, getCache } from '../../cache.js';
-import { DEFAULT_AUTH_PROVIDER, GENERATE_SPECIAL } from '../../constants.js';
+import {
+	DEFAULT_AUTH_PROVIDER,
+	GENERATE_SPECIAL,
+	REFRESH_COOKIE_OPTIONS,
+	SESSION_COOKIE_OPTIONS,
+} from '../../constants.js';
 import getDatabase from '../../database/index.js';
-import { useEnv } from '../../env.js';
-import type { AbstractServiceOptions, GraphQLParams, Item } from '../../types/index.js';
+import { rateLimiter } from '../../middleware/rate-limiter-registration.js';
+import { fetchAccountabilityCollectionAccess } from '../../permissions/modules/fetch-accountability-collection-access/fetch-accountability-collection-access.js';
+import { fetchAccountabilityPolicyGlobals } from '../../permissions/modules/fetch-accountability-policy-globals/fetch-accountability-policy-globals.js';
+import { fetchAllowedFieldMap } from '../../permissions/modules/fetch-allowed-field-map/fetch-allowed-field-map.js';
+import { fetchInconsistentFieldMap } from '../../permissions/modules/fetch-inconsistent-field-map/fetch-inconsistent-field-map.js';
+import { createDefaultAccountability } from '../../permissions/utils/create-default-accountability.js';
+import type { AbstractServiceOptions, AuthenticationMode, GraphQLParams } from '../../types/index.js';
 import { generateHash } from '../../utils/generate-hash.js';
 import { getGraphQLType } from '../../utils/get-graphql-type.js';
-import { getMilliseconds } from '../../utils/get-milliseconds.js';
+import { getIPFromReq } from '../../utils/get-ip-from-req.js';
+import { getSecret } from '../../utils/get-secret.js';
 import { getService } from '../../utils/get-service.js';
+import isDirectusJWT from '../../utils/is-directus-jwt.js';
+import { verifyAccessJWT } from '../../utils/jwt.js';
+import { mergeVersionsRaw, mergeVersionsRecursive } from '../../utils/merge-version-data.js';
 import { reduceSchema } from '../../utils/reduce-schema.js';
 import { sanitizeQuery } from '../../utils/sanitize-query.js';
-import { toBoolean } from '../../utils/to-boolean.js';
 import { validateQuery } from '../../utils/validate-query.js';
-import { ActivityService } from '../activity.js';
 import { AuthenticationService } from '../authentication.js';
 import { CollectionsService } from '../collections.js';
 import { ExtensionsService } from '../extensions.js';
@@ -65,6 +88,7 @@ import { FieldsService } from '../fields.js';
 import { FilesService } from '../files.js';
 import { RelationsService } from '../relations.js';
 import { RevisionsService } from '../revisions.js';
+import { RolesService } from '../roles.js';
 import { ServerService } from '../server.js';
 import { SpecificationService } from '../specifications.js';
 import { TFAService } from '../tfa.js';
@@ -72,6 +96,7 @@ import { UsersService } from '../users.js';
 import { UtilsService } from '../utils.js';
 import { VersionsService } from '../versions.js';
 import { GraphQLExecutionError, GraphQLValidationError } from './errors/index.js';
+import { cache } from './schema-cache.js';
 import { createSubscriptionGenerator } from './subscription.js';
 import { GraphQLBigInt } from './types/bigint.js';
 import { GraphQLDate } from './types/date.js';
@@ -81,6 +106,7 @@ import { GraphQLStringOrFloat } from './types/string-or-float.js';
 import { GraphQLVoid } from './types/void.js';
 import { addPathToValidationError } from './utils/add-path-to-validation-error.js';
 import processError from './utils/process-error.js';
+import { sanitizeGraphqlSchema } from './utils/sanitize-gql-schema.js';
 
 const env = useEnv();
 
@@ -126,7 +152,7 @@ export class GraphQLService {
 		operationName,
 		contextValue,
 	}: GraphQLParams): Promise<FormattedExecutionResult> {
-		const schema = this.getSchema();
+		const schema = await this.getSchema();
 
 		const validationErrors = validate(schema, document, validationRules).map((validationError) =>
 			addPathToValidationError(validationError),
@@ -166,32 +192,106 @@ export class GraphQLService {
 	/**
 	 * Generate the GraphQL schema. Pulls from the schema information generated by the get-schema util.
 	 */
-	getSchema(): GraphQLSchema;
-	getSchema(type: 'schema'): GraphQLSchema;
-	getSchema(type: 'sdl'): GraphQLSchema | string;
-	getSchema(type: 'schema' | 'sdl' = 'schema'): GraphQLSchema | string {
+	async getSchema(): Promise<GraphQLSchema>;
+	async getSchema(type: 'schema'): Promise<GraphQLSchema>;
+	async getSchema(type: 'sdl'): Promise<GraphQLSchema | string>;
+	async getSchema(type: 'schema' | 'sdl' = 'schema'): Promise<GraphQLSchema | string> {
+		const key = `${this.scope}_${type}_${this.accountability?.role}_${this.accountability?.user}`;
+
+		const cachedSchema = cache.get(key);
+
+		if (cachedSchema) return cachedSchema;
+
 		// eslint-disable-next-line @typescript-eslint/no-this-alias
 		const self = this;
 
 		const schemaComposer = new SchemaComposer<GraphQLParams['contextValue']>();
 
-		const schema = {
-			read:
-				this.accountability?.admin === true
-					? this.schema
-					: reduceSchema(this.schema, this.accountability?.permissions || null, ['read']),
-			create:
-				this.accountability?.admin === true
-					? this.schema
-					: reduceSchema(this.schema, this.accountability?.permissions || null, ['create']),
-			update:
-				this.accountability?.admin === true
-					? this.schema
-					: reduceSchema(this.schema, this.accountability?.permissions || null, ['update']),
-			delete:
-				this.accountability?.admin === true
-					? this.schema
-					: reduceSchema(this.schema, this.accountability?.permissions || null, ['delete']),
+		let schema: { read: SchemaOverview; create: SchemaOverview; update: SchemaOverview; delete: SchemaOverview };
+
+		const sanitizedSchema = sanitizeGraphqlSchema(this.schema);
+
+		if (!this.accountability || this.accountability.admin) {
+			schema = {
+				read: sanitizedSchema,
+				create: sanitizedSchema,
+				update: sanitizedSchema,
+				delete: sanitizedSchema,
+			};
+		} else {
+			schema = {
+				read: reduceSchema(
+					sanitizedSchema,
+					await fetchAllowedFieldMap(
+						{
+							accountability: this.accountability,
+							action: 'read',
+						},
+						{ schema: this.schema, knex: this.knex },
+					),
+				),
+				create: reduceSchema(
+					sanitizedSchema,
+					await fetchAllowedFieldMap(
+						{
+							accountability: this.accountability,
+							action: 'create',
+						},
+						{ schema: this.schema, knex: this.knex },
+					),
+				),
+				update: reduceSchema(
+					sanitizedSchema,
+					await fetchAllowedFieldMap(
+						{
+							accountability: this.accountability,
+							action: 'update',
+						},
+						{ schema: this.schema, knex: this.knex },
+					),
+				),
+				delete: reduceSchema(
+					sanitizedSchema,
+					await fetchAllowedFieldMap(
+						{
+							accountability: this.accountability,
+							action: 'delete',
+						},
+						{ schema: this.schema, knex: this.knex },
+					),
+				),
+			};
+		}
+
+		const inconsistentFields = {
+			read: await fetchInconsistentFieldMap(
+				{
+					accountability: this.accountability,
+					action: 'read',
+				},
+				{ schema: this.schema, knex: this.knex },
+			),
+			create: await fetchInconsistentFieldMap(
+				{
+					accountability: this.accountability,
+					action: 'create',
+				},
+				{ schema: this.schema, knex: this.knex },
+			),
+			update: await fetchInconsistentFieldMap(
+				{
+					accountability: this.accountability,
+					action: 'update',
+				},
+				{ schema: this.schema, knex: this.knex },
+			),
+			delete: await fetchInconsistentFieldMap(
+				{
+					accountability: this.accountability,
+					action: 'delete',
+				},
+				{ schema: this.schema, knex: this.knex },
+			),
 		};
 
 		const subscriptionEventType = schemaComposer.createEnumTC({
@@ -207,10 +307,10 @@ export class GraphQLService {
 		const { CreateCollectionTypes, UpdateCollectionTypes, DeleteCollectionTypes } = getWritableTypes();
 
 		const scopeFilter = (collection: SchemaOverview['collections'][string]) => {
-			if (this.scope === 'items' && collection.collection.startsWith('directus_') === true) return false;
+			if (this.scope === 'items' && isSystemCollection(collection.collection)) return false;
 
 			if (this.scope === 'system') {
-				if (collection.collection.startsWith('directus_') === false) return false;
+				if (isSystemCollection(collection.collection) === false) return false;
 				if (SYSTEM_DENY_LIST.includes(collection.collection)) return false;
 			}
 
@@ -224,7 +324,6 @@ export class GraphQLService {
 					CreateCollectionTypes,
 					ReadCollectionTypes,
 					UpdateCollectionTypes,
-					DeleteCollectionTypes,
 				},
 				schema,
 			);
@@ -360,10 +459,14 @@ export class GraphQLService {
 		}
 
 		if (type === 'sdl') {
-			return schemaComposer.toSDL();
+			const sdl = schemaComposer.toSDL();
+			cache.set(key, sdl);
+			return sdl;
 		}
 
-		return schemaComposer.buildSchema();
+		const gqlSchema = schemaComposer.buildSchema();
+		cache.set(key, gqlSchema);
+		return gqlSchema;
 
 		/**
 		 * Construct an object of types for every collection, using the permitted fields per action type
@@ -439,6 +542,8 @@ export class GraphQLService {
 								field.special,
 							);
 
+							const fieldIsInconsistent = inconsistentFields[action][collection.collection]?.includes(field.field);
+
 							// GraphQL doesn't differentiate between not-null and has-to-be-submitted. We
 							// can't non-null in update, as that would require every not-nullable field to be
 							// submitted on updates
@@ -446,12 +551,13 @@ export class GraphQLService {
 								field.nullable === false &&
 								!field.defaultValue &&
 								!GENERATE_SPECIAL.some((flag) => field.special.includes(flag)) &&
+								fieldIsInconsistent === false &&
 								action !== 'update'
 							) {
 								type = new GraphQLNonNull(type);
 							}
 
-							if (collection.primary === field.field) {
+							if (collection.primary === field.field && fieldIsInconsistent === false) {
 								// permissions IDs need to be nullable https://github.com/directus/directus/issues/20509
 								if (collection.collection === 'directus_permissions') {
 									type = GraphQLID;
@@ -537,6 +643,15 @@ export class GraphQLService {
 					CollectionTypes[relation.collection]?.addFields({
 						[relation.field]: {
 							type: CollectionTypes[relation.related_collection]!,
+							resolve: (obj: Record<string, any>, _, __, info) => {
+								return obj[info?.path?.key ?? relation.field];
+							},
+						},
+					});
+
+					VersionTypes[relation.collection]?.addFields({
+						[relation.field]: {
+							type: GraphQLJSON,
 							resolve: (obj: Record<string, any>, _, __, info) => {
 								return obj[info?.path?.key ?? relation.field];
 							},
@@ -1133,6 +1248,10 @@ export class GraphQLService {
 							type: GraphQLString,
 						},
 					};
+				} else {
+					resolver.args = {
+						version: GraphQLString,
+					};
 				}
 
 				ReadCollectionTypes[collection.collection]!.addResolver(resolver);
@@ -1175,6 +1294,7 @@ export class GraphQLService {
 						type: ReadCollectionTypes[collection.collection]!,
 						args: {
 							id: new GraphQLNonNull(GraphQLID),
+							version: GraphQLString,
 						},
 						resolve: async ({ info, context }: { info: GraphQLResolveInfo; context: Record<string, any> }) => {
 							const result = await self.resolveQuery(info);
@@ -1487,6 +1607,7 @@ export class GraphQLService {
 		const args: Record<string, any> = this.parseArgs(info.fieldNodes[0]!.arguments || [], info.variableValues);
 
 		let query: Query;
+		let versionRaw = false;
 
 		const isAggregate = collection.endsWith('_aggregated') && collection in this.schema.collections === false;
 
@@ -1502,6 +1623,7 @@ export class GraphQLService {
 
 			if (collection.endsWith('_by_version') && collection in this.schema.collections === false) {
 				collection = collection.slice(0, -11);
+				versionRaw = true;
 			}
 		}
 
@@ -1536,10 +1658,15 @@ export class GraphQLService {
 
 			if (saves) {
 				if (this.schema.collections[collection]!.singleton) {
-					return assign(result, ...saves);
+					return versionRaw
+						? mergeVersionsRaw(result, saves)
+						: mergeVersionsRecursive(result, saves, collection, this.schema);
 				} else {
 					if (result?.[0] === undefined) return null;
-					return assign(result[0], ...saves);
+
+					return versionRaw
+						? mergeVersionsRaw(result[0], saves)
+						: mergeVersionsRecursive(result[0], saves, collection, this.schema);
 				}
 			}
 		}
@@ -1965,12 +2092,10 @@ export class GraphQLService {
 			CreateCollectionTypes,
 			ReadCollectionTypes,
 			UpdateCollectionTypes,
-			DeleteCollectionTypes,
 		}: {
 			CreateCollectionTypes: Record<string, ObjectTypeComposer<any, any>>;
 			ReadCollectionTypes: Record<string, ObjectTypeComposer<any, any>>;
 			UpdateCollectionTypes: Record<string, ObjectTypeComposer<any, any>>;
-			DeleteCollectionTypes: Record<string, ObjectTypeComposer<any, any>>;
 		},
 		schema: {
 			create: SchemaOverview;
@@ -1993,6 +2118,7 @@ export class GraphQLService {
 			values: {
 				json: { value: 'json' },
 				cookie: { value: 'cookie' },
+				session: { value: 'session' },
 			},
 		});
 
@@ -2012,6 +2138,8 @@ export class GraphQLService {
 							public_background: { type: GraphQLString },
 							public_note: { type: GraphQLString },
 							custom_css: { type: GraphQLString },
+							public_registration: { type: GraphQLBoolean },
+							public_registration_verify_email: { type: GraphQLBoolean },
 						},
 					}),
 				},
@@ -2133,7 +2261,7 @@ export class GraphQLService {
 						scope: args['scope'] ?? 'items',
 					});
 
-					return service.getSchema('sdl');
+					return await service.getSchema('sdl');
 				},
 			},
 			server_ping: {
@@ -2193,7 +2321,7 @@ export class GraphQLService {
 					otp: GraphQLString,
 				},
 				resolve: async (_, args, { req, res }) => {
-					const accountability: Accountability = { role: null };
+					const accountability: Accountability = createDefaultAccountability();
 
 					if (req?.ip) accountability.ip = req.ip;
 
@@ -2208,23 +2336,34 @@ export class GraphQLService {
 						schema: this.schema,
 					});
 
-					const result = await authenticationService.login(DEFAULT_AUTH_PROVIDER, args, args?.otp);
+					const mode: AuthenticationMode = args['mode'] ?? 'json';
 
-					if (args['mode'] === 'cookie') {
-						res?.cookie(env['REFRESH_TOKEN_COOKIE_NAME'], result['refreshToken'], {
-							httpOnly: true,
-							domain: env['REFRESH_TOKEN_COOKIE_DOMAIN'],
-							maxAge: getMilliseconds(env['REFRESH_TOKEN_TTL']),
-							secure: env['REFRESH_TOKEN_COOKIE_SECURE'] ?? false,
-							sameSite: (env['REFRESH_TOKEN_COOKIE_SAME_SITE'] as 'lax' | 'strict' | 'none') || 'strict',
-						});
+					const { accessToken, refreshToken, expires } = await authenticationService.login(
+						DEFAULT_AUTH_PROVIDER,
+						args,
+						{
+							session: mode === 'session',
+							otp: args?.otp,
+						},
+					);
+
+					const payload = { expires } as { expires: number; access_token?: string; refresh_token?: string };
+
+					if (mode === 'json') {
+						payload.refresh_token = refreshToken;
+						payload.access_token = accessToken;
 					}
 
-					return {
-						access_token: result['accessToken'],
-						expires: result['expires'],
-						refresh_token: result['refreshToken'],
-					};
+					if (mode === 'cookie') {
+						res?.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+						payload.access_token = accessToken;
+					}
+
+					if (mode === 'session') {
+						res?.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+					}
+
+					return payload;
 				},
 			},
 			auth_refresh: {
@@ -2234,7 +2373,7 @@ export class GraphQLService {
 					mode: AuthMode,
 				},
 				resolve: async (_, args, { req, res }) => {
-					const accountability: Accountability = { role: null };
+					const accountability: Accountability = createDefaultAccountability();
 
 					if (req?.ip) accountability.ip = req.ip;
 
@@ -2249,40 +2388,59 @@ export class GraphQLService {
 						schema: this.schema,
 					});
 
-					const currentRefreshToken = args['refresh_token'] || req?.cookies[env['REFRESH_TOKEN_COOKIE_NAME']];
+					const mode: AuthenticationMode = args['mode'] ?? 'json';
+					let currentRefreshToken: string | undefined;
+
+					if (mode === 'json') {
+						currentRefreshToken = args['refresh_token'];
+					} else if (mode === 'cookie') {
+						currentRefreshToken = req?.cookies[env['REFRESH_TOKEN_COOKIE_NAME'] as string];
+					} else if (mode === 'session') {
+						const token = req?.cookies[env['SESSION_COOKIE_NAME'] as string];
+
+						if (isDirectusJWT(token)) {
+							const payload = verifyAccessJWT(token, getSecret());
+							currentRefreshToken = payload.session;
+						}
+					}
 
 					if (!currentRefreshToken) {
 						throw new InvalidPayloadError({
-							reason: `"refresh_token" is required in either the JSON payload or Cookie`,
+							reason: `The refresh token is required in either the payload or cookie`,
 						});
 					}
 
-					const result = await authenticationService.refresh(currentRefreshToken);
+					const { accessToken, refreshToken, expires } = await authenticationService.refresh(currentRefreshToken, {
+						session: mode === 'session',
+					});
 
-					if (args['mode'] === 'cookie') {
-						res?.cookie(env['REFRESH_TOKEN_COOKIE_NAME'], result['refreshToken'], {
-							httpOnly: true,
-							domain: env['REFRESH_TOKEN_COOKIE_DOMAIN'],
-							maxAge: getMilliseconds(env['REFRESH_TOKEN_TTL']),
-							secure: env['REFRESH_TOKEN_COOKIE_SECURE'] ?? false,
-							sameSite: (env['REFRESH_TOKEN_COOKIE_SAME_SITE'] as 'lax' | 'strict' | 'none') || 'strict',
-						});
+					const payload = { expires } as { expires: number; access_token?: string; refresh_token?: string };
+
+					if (mode === 'json') {
+						payload.refresh_token = refreshToken;
+						payload.access_token = accessToken;
 					}
 
-					return {
-						access_token: result['accessToken'],
-						expires: result['expires'],
-						refresh_token: result['refreshToken'],
-					};
+					if (mode === 'cookie') {
+						res?.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+						payload.access_token = accessToken;
+					}
+
+					if (mode === 'session') {
+						res?.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+					}
+
+					return payload;
 				},
 			},
 			auth_logout: {
 				type: GraphQLBoolean,
 				args: {
 					refresh_token: GraphQLString,
+					mode: AuthMode,
 				},
-				resolve: async (_, args, { req }) => {
-					const accountability: Accountability = { role: null };
+				resolve: async (_, args, { req, res }) => {
+					const accountability: Accountability = createDefaultAccountability();
 
 					if (req?.ip) accountability.ip = req.ip;
 
@@ -2297,15 +2455,38 @@ export class GraphQLService {
 						schema: this.schema,
 					});
 
-					const currentRefreshToken = args['refresh_token'] || req?.cookies[env['REFRESH_TOKEN_COOKIE_NAME']];
+					const mode: AuthenticationMode = args['mode'] ?? 'json';
+					let currentRefreshToken: string | undefined;
+
+					if (mode === 'json') {
+						currentRefreshToken = args['refresh_token'];
+					} else if (mode === 'cookie') {
+						currentRefreshToken = req?.cookies[env['REFRESH_TOKEN_COOKIE_NAME'] as string];
+					} else if (mode === 'session') {
+						const token = req?.cookies[env['SESSION_COOKIE_NAME'] as string];
+
+						if (isDirectusJWT(token)) {
+							const payload = verifyAccessJWT(token, getSecret());
+							currentRefreshToken = payload.session;
+						}
+					}
 
 					if (!currentRefreshToken) {
 						throw new InvalidPayloadError({
-							reason: `"refresh_token" is required in either the JSON payload or Cookie`,
+							reason: `The refresh token is required in either the payload or cookie`,
 						});
 					}
 
 					await authenticationService.logout(currentRefreshToken);
+
+					if (req?.cookies[env['REFRESH_TOKEN_COOKIE_NAME'] as string]) {
+						res?.clearCookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, REFRESH_COOKIE_OPTIONS);
+					}
+
+					if (req?.cookies[env['SESSION_COOKIE_NAME'] as string]) {
+						res?.clearCookie(env['SESSION_COOKIE_NAME'] as string, SESSION_COOKIE_OPTIONS);
+					}
+
 					return true;
 				},
 			},
@@ -2316,7 +2497,7 @@ export class GraphQLService {
 					reset_url: GraphQLString,
 				},
 				resolve: async (_, args, { req }) => {
-					const accountability: Accountability = { role: null };
+					const accountability: Accountability = createDefaultAccountability();
 
 					if (req?.ip) accountability.ip = req.ip;
 
@@ -2345,7 +2526,7 @@ export class GraphQLService {
 					password: new GraphQLNonNull(GraphQLString),
 				},
 				resolve: async (_, args, { req }) => {
-					const accountability: Accountability = { role: null };
+					const accountability: Accountability = createDefaultAccountability();
 
 					if (req?.ip) accountability.ip = req.ip;
 
@@ -2438,11 +2619,11 @@ export class GraphQLService {
 				resolve: async (_, args) => {
 					const { nanoid } = await import('nanoid');
 
-					if (args['length'] && Number(args['length']) > 500) {
-						throw new InvalidPayloadError({ reason: `"length" can't be more than 500 characters` });
+					if (args['length'] !== undefined && (args['length'] < 1 || args['length'] > 500)) {
+						throw new InvalidPayloadError({ reason: `"length" must be between 1 and 500` });
 					}
 
-					return nanoid(args['length'] ? Number(args['length']) : 32);
+					return nanoid(args['length'] ? args['length'] : 32);
 				},
 			},
 			utils_hash_generate: {
@@ -2525,6 +2706,46 @@ export class GraphQLService {
 					});
 
 					await service.acceptInvite(args['token'], args['password']);
+					return true;
+				},
+			},
+			users_register: {
+				type: GraphQLBoolean,
+				args: {
+					email: new GraphQLNonNull(GraphQLString),
+					password: new GraphQLNonNull(GraphQLString),
+					verification_url: GraphQLString,
+					first_name: GraphQLString,
+					last_name: GraphQLString,
+				},
+				resolve: async (_, args, { req }) => {
+					const service = new UsersService({ accountability: null, schema: this.schema });
+
+					const ip = req ? getIPFromReq(req) : null;
+
+					if (ip) {
+						await rateLimiter.consume(ip);
+					}
+
+					await service.registerUser({
+						email: args.email,
+						password: args.password,
+						verification_url: args.verification_url,
+						first_name: args.first_name,
+						last_name: args.last_name,
+					});
+
+					return true;
+				},
+			},
+			users_register_verify: {
+				type: GraphQLBoolean,
+				args: {
+					token: new GraphQLNonNull(GraphQLString),
+				},
+				resolve: async (_, args) => {
+					const service = new UsersService({ accountability: null, schema: this.schema });
+					await service.verifyRegistration(args.token);
 					return true;
 				},
 			},
@@ -2619,6 +2840,9 @@ export class GraphQLService {
 						max_length: GraphQLInt,
 						numeric_precision: GraphQLInt,
 						numeric_scale: GraphQLInt,
+						is_generated: GraphQLBoolean,
+						generation_expression: GraphQLString,
+						is_indexed: GraphQLBoolean,
 						is_nullable: GraphQLBoolean,
 						is_unique: GraphQLBoolean,
 						is_primary_key: GraphQLBoolean,
@@ -2970,8 +3194,7 @@ export class GraphQLService {
 				update_extensions_item: {
 					type: Extension,
 					args: {
-						bundle: GraphQLString,
-						name: new GraphQLNonNull(GraphQLString),
+						id: GraphQLID,
 						data: toInputObjectType(
 							schemaComposer.createObjectTC({
 								name: 'update_directus_extensions_input',
@@ -2992,8 +3215,8 @@ export class GraphQLService {
 							schema: this.schema,
 						});
 
-						await extensionsService.updateOne(args['bundle'], args['name'], args['data']);
-						return await extensionsService.readOne(args['bundle'], args['name']);
+						await extensionsService.updateOne(args['id'], args['data']);
+						return await extensionsService.readOne(args['id']);
 					},
 				},
 			});
@@ -3015,6 +3238,81 @@ export class GraphQLService {
 						const query = this.getQuery(args, selections || [], info.variableValues);
 
 						return await service.readOne(this.accountability.user, query);
+					},
+				},
+			});
+		}
+
+		if ('directus_permissions' in schema.read.collections) {
+			schemaComposer.Query.addFields({
+				permissions_me: {
+					type: schemaComposer.createScalarTC<CollectionAccess>({
+						name: 'permissions_me_type',
+						parseValue: (value: unknown) => value as CollectionAccess,
+						serialize: (value) => value,
+					}),
+					resolve: async (_, _args, __, _info) => {
+						if (!this.accountability?.user && !this.accountability?.role) return null;
+
+						const result = await fetchAccountabilityCollectionAccess(this.accountability, {
+							schema: this.schema,
+							knex: getDatabase(),
+						});
+
+						return result;
+					},
+				},
+			});
+		}
+
+		if ('directus_roles' in schema.read.collections) {
+			schemaComposer.Query.addFields({
+				roles_me: {
+					type: ReadCollectionTypes['directus_roles']!.List,
+					resolve: async (_, args, __, info) => {
+						if (!this.accountability?.user && !this.accountability?.role) return null;
+
+						const service = new RolesService({
+							accountability: this.accountability,
+							schema: this.schema,
+						});
+
+						const selections = this.replaceFragmentsInSelections(
+							info.fieldNodes[0]?.selectionSet?.selections,
+							info.fragments,
+						);
+
+						const query = this.getQuery(args, selections || [], info.variableValues);
+						query.limit = -1;
+
+						const roles = await service.readMany(this.accountability.roles, query);
+
+						return roles;
+					},
+				},
+			});
+		}
+
+		if ('directus_policies' in schema.read.collections) {
+			schemaComposer.Query.addFields({
+				policies_me_globals: {
+					type: schemaComposer.createObjectTC({
+						name: 'policy_me_globals_type',
+						fields: {
+							enforce_tfa: 'Boolean',
+							app_access: 'Boolean',
+							admin_access: 'Boolean',
+						},
+					}),
+					resolve: async (_, _args, __, _info) => {
+						if (!this.accountability?.user && !this.accountability?.role) return null;
+
+						const result = await fetchAccountabilityPolicyGlobals(this.accountability, {
+							schema: this.schema,
+							knex: getDatabase(),
+						});
+
+						return result;
 					},
 				},
 			});
@@ -3049,100 +3347,6 @@ export class GraphQLService {
 						}
 
 						return true;
-					},
-				},
-			});
-		}
-
-		if ('directus_activity' in schema.create.collections) {
-			schemaComposer.Mutation.addFields({
-				create_comment: {
-					type: ReadCollectionTypes['directus_activity'] ?? GraphQLBoolean,
-					args: {
-						collection: new GraphQLNonNull(GraphQLString),
-						item: new GraphQLNonNull(GraphQLID),
-						comment: new GraphQLNonNull(GraphQLString),
-					},
-					resolve: async (_, args, __, info) => {
-						const service = new ActivityService({
-							accountability: this.accountability,
-							schema: this.schema,
-						});
-
-						const primaryKey = await service.createOne({
-							...args,
-							action: Action.COMMENT,
-							user: this.accountability?.user,
-							ip: this.accountability?.ip,
-							user_agent: this.accountability?.userAgent,
-							origin: this.accountability?.origin,
-						});
-
-						if ('directus_activity' in ReadCollectionTypes) {
-							const selections = this.replaceFragmentsInSelections(
-								info.fieldNodes[0]?.selectionSet?.selections,
-								info.fragments,
-							);
-
-							const query = this.getQuery(args, selections || [], info.variableValues);
-
-							return await service.readOne(primaryKey, query);
-						}
-
-						return true;
-					},
-				},
-			});
-		}
-
-		if ('directus_activity' in schema.update.collections) {
-			schemaComposer.Mutation.addFields({
-				update_comment: {
-					type: ReadCollectionTypes['directus_activity'] ?? GraphQLBoolean,
-					args: {
-						id: new GraphQLNonNull(GraphQLID),
-						comment: new GraphQLNonNull(GraphQLString),
-					},
-					resolve: async (_, args, __, info) => {
-						const service = new ActivityService({
-							accountability: this.accountability,
-							schema: this.schema,
-						});
-
-						const primaryKey = await service.updateOne(args['id'], { comment: args['comment'] });
-
-						if ('directus_activity' in ReadCollectionTypes) {
-							const selections = this.replaceFragmentsInSelections(
-								info.fieldNodes[0]?.selectionSet?.selections,
-								info.fragments,
-							);
-
-							const query = this.getQuery(args, selections || [], info.variableValues);
-
-							return await service.readOne(primaryKey, query);
-						}
-
-						return true;
-					},
-				},
-			});
-		}
-
-		if ('directus_activity' in schema.delete.collections) {
-			schemaComposer.Mutation.addFields({
-				delete_comment: {
-					type: DeleteCollectionTypes['one']!,
-					args: {
-						id: new GraphQLNonNull(GraphQLID),
-					},
-					resolve: async (_, args) => {
-						const service = new ActivityService({
-							accountability: this.accountability,
-							schema: this.schema,
-						});
-
-						await service.deleteOne(args['id']);
-						return { id: args['id'] };
 					},
 				},
 			});

@@ -1,4 +1,5 @@
 import { ErrorCode, InvalidPayloadError, isDirectusError } from '@directus/errors';
+import type { PrimaryKey } from '@directus/types';
 import express from 'express';
 import { assign } from 'lodash-es';
 import { respond } from '../middleware/respond.js';
@@ -6,7 +7,6 @@ import useCollection from '../middleware/use-collection.js';
 import { validateBatch } from '../middleware/validate-batch.js';
 import { MetaService } from '../services/meta.js';
 import { VersionsService } from '../services/versions.js';
-import type { PrimaryKey } from '../types/index.js';
 import asyncHandler from '../utils/async-handler.js';
 import { sanitizeQuery } from '../utils/sanitize-query.js';
 
@@ -211,9 +211,7 @@ router.get(
 
 		const { outdated, mainHash } = await service.verifyHash(version['collection'], version['item'], version['hash']);
 
-		const saves = await service.getVersionSavesById(version['id']);
-
-		const current = assign({}, ...saves);
+		const current = assign({}, version['delta']);
 
 		const main = await service.getMainItem(version['collection'], version['item']);
 
@@ -236,11 +234,9 @@ router.post(
 
 		const mainItem = await service.getMainItem(version['collection'], version['item']);
 
-		await service.save(req.params['pk']!, req.body);
+		const updatedVersion = await service.save(req.params['pk']!, req.body);
 
-		const saves = await service.getVersionSavesById(req.params['pk']!);
-
-		const result = assign(mainItem, ...saves);
+		const result = assign(mainItem, updatedVersion);
 
 		res.locals['payload'] = { data: result || null };
 

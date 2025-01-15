@@ -3,25 +3,27 @@ import api from '@/api';
 import { useEventListener } from '@/composables/use-event-listener';
 import { useExtension } from '@/composables/use-extension';
 import { Folder, useFolders } from '@/composables/use-folders';
+import { useCollectionPermissions } from '@/composables/use-permissions';
 import { usePreset } from '@/composables/use-preset';
-import emitter, { Events } from '@/events';
+import { emitter, Events } from '@/events';
+import { useFilesStore } from '@/stores/files.js';
 import { useNotificationsStore } from '@/stores/notifications';
-import { usePermissionsStore } from '@/stores/permissions';
 import { useUserStore } from '@/stores/user';
+import { getFolderFilter } from '@/utils/get-folder-filter';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { uploadFiles } from '@/utils/upload-files';
-import { getFolderFilter } from '@/utils/get-folder-filter';
 import DrawerBatch from '@/views/private/components/drawer-batch.vue';
+import FilesNavigation from '@/views/private/components/files-navigation.vue';
 import FolderPicker from '@/views/private/components/folder-picker.vue';
 import LayoutSidebarDetail from '@/views/private/components/layout-sidebar-detail.vue';
 import SearchInput from '@/views/private/components/search-input.vue';
 import { useLayout } from '@directus/composables';
 import { mergeFilters } from '@directus/utils';
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router';
 import AddFolder from '../components/add-folder.vue';
-import FilesNavigation from '@/views/private/components/files-navigation.vue';
+import { storeToRefs } from 'pinia';
 
 type Item = {
 	[field: string]: any;
@@ -37,7 +39,6 @@ const { t } = useI18n();
 const router = useRouter();
 
 const notificationsStore = useNotificationsStore();
-const permissionsStore = usePermissionsStore();
 const { folders } = useFolders();
 
 const layoutRef = ref();
@@ -61,9 +62,6 @@ const { layoutWrapper } = useLayout(layout);
 
 const { moveToDialogActive, moveToFolder, moving, selectedFolder } = useMovetoFolder();
 
-onMounted(() => emitter.on(Events.upload, refresh));
-onUnmounted(() => emitter.off(Events.upload, refresh));
-
 onBeforeRouteLeave(() => {
 	selection.value = [];
 });
@@ -72,14 +70,26 @@ onBeforeRouteUpdate(() => {
 	selection.value = [];
 });
 
-const { onDragEnter, onDragLeave, onDrop, onDragOver, showDropEffect, dragging } = useFileUpload();
+const { isAnyUploadActive, onDragEnter, onDragLeave, onDrop, onDragOver, showDropEffect, dragging } = useFileUpload();
 
 useEventListener(window, 'dragenter', onDragEnter);
 useEventListener(window, 'dragover', onDragOver);
 useEventListener(window, 'dragleave', onDragLeave);
 useEventListener(window, 'drop', onDrop);
 
-const { batchEditAllowed, batchDeleteAllowed, createAllowed, createFolderAllowed } = usePermissions();
+watch(isAnyUploadActive, (isUploading, wasUploading) => {
+	if (wasUploading && !isUploading) {
+		refresh();
+	}
+});
+
+const {
+	updateAllowed: batchEditAllowed,
+	deleteAllowed: batchDeleteAllowed,
+	createAllowed,
+} = useCollectionPermissions('directus_files');
+
+const { createAllowed: createFolderAllowed } = useCollectionPermissions('directus_folders');
 
 function useBatch() {
 	const confirmDelete = ref(false);
@@ -199,55 +209,11 @@ function clearFilters() {
 	search.value = null;
 }
 
-function usePermissions() {
-	const batchEditAllowed = computed(() => {
-		const admin = userStore?.currentUser?.role.admin_access === true;
-		if (admin) return true;
-
-		const updatePermissions = permissionsStore.permissions.find(
-			(permission) => permission.action === 'update' && permission.collection === 'directus_files',
-		);
-
-		return !!updatePermissions;
-	});
-
-	const batchDeleteAllowed = computed(() => {
-		const admin = userStore?.currentUser?.role.admin_access === true;
-		if (admin) return true;
-
-		const deletePermissions = permissionsStore.permissions.find(
-			(permission) => permission.action === 'delete' && permission.collection === 'directus_files',
-		);
-
-		return !!deletePermissions;
-	});
-
-	const createAllowed = computed(() => {
-		const admin = userStore?.currentUser?.role.admin_access === true;
-		if (admin) return true;
-
-		const createPermissions = permissionsStore.permissions.find(
-			(permission) => permission.action === 'create' && permission.collection === 'directus_files',
-		);
-
-		return !!createPermissions;
-	});
-
-	const createFolderAllowed = computed(() => {
-		const admin = userStore?.currentUser?.role.admin_access === true;
-		if (admin) return true;
-
-		const createPermissions = permissionsStore.permissions.find(
-			(permission) => permission.action === 'create' && permission.collection === 'directus_folders',
-		);
-
-		return !!createPermissions;
-	});
-
-	return { batchEditAllowed, batchDeleteAllowed, createAllowed, createFolderAllowed };
-}
-
 function useFileUpload() {
+	const filesStore = useFilesStore();
+	const { isAnyUploadActive } = storeToRefs(filesStore);
+	const newUpload = filesStore.upload();
+
 	const showDropEffect = ref(false);
 
 	let dragNotificationID: string;
@@ -257,7 +223,7 @@ function useFileUpload() {
 
 	const dragging = computed(() => dragCounter.value > 0);
 
-	return { onDragEnter, onDragLeave, onDrop, onDragOver, showDropEffect, dragging };
+	return { isAnyUploadActive, onDragEnter, onDragLeave, onDrop, onDragOver, showDropEffect, dragging };
 
 	function enableDropEffect() {
 		showDropEffect.value = true;
@@ -335,7 +301,7 @@ function useFileUpload() {
 			notificationsStore.remove(dragNotificationID);
 		}
 
-		const files = [...(event.dataTransfer.files as any)];
+		const files = Array.from(event.dataTransfer.files).filter((file) => file.type);
 
 		fileUploadNotificationID = notificationsStore.add({
 			title: t(
@@ -354,28 +320,34 @@ function useFileUpload() {
 
 		const preset = props.folder ? { folder: props.folder } : undefined;
 
-		await uploadFiles(files, {
-			preset,
-			onProgressChange: (progress) => {
-				const percentageDone = progress.reduce((val, cur) => (val += cur)) / progress.length;
+		try {
+			newUpload.start(files.length);
 
-				const total = files.length;
-				const done = progress.filter((p) => p === 100).length;
+			await uploadFiles(files, {
+				preset,
+				onProgressChange: (progress) => {
+					const percentageDone = progress.reduce((val, cur) => (val += cur)) / progress.length;
 
-				notificationsStore.update(fileUploadNotificationID, {
-					title: t(
-						'upload_files_indeterminate',
-						{
-							done,
-							total,
-						},
-						files.length,
-					),
-					loading: false,
-					progress: percentageDone,
-				});
-			},
-		});
+					const total = files.length;
+					const done = progress.filter((p) => p === 100).length;
+
+					notificationsStore.update(fileUploadNotificationID, {
+						title: t(
+							'upload_files_indeterminate',
+							{
+								done,
+								total,
+							},
+							files.length,
+						),
+						loading: false,
+						progress: percentageDone,
+					});
+				},
+			});
+		} finally {
+			newUpload.finish();
+		}
 
 		notificationsStore.remove(fileUploadNotificationID);
 		emitter.emit(Events.upload);
@@ -490,7 +462,7 @@ function useFileUpload() {
 				</v-button>
 
 				<v-button
-					v-tooltip.bottom="createAllowed ? t('create_item') : t('not_allowed')"
+					v-tooltip.bottom="createAllowed ? t('upload_file') : t('not_allowed')"
 					rounded
 					icon
 					:to="folder ? { path: `/files/folders/${folder}/+` } : { path: '/files/+' }"
@@ -530,7 +502,11 @@ function useFileUpload() {
 						{{ t('no_files_copy') }}
 
 						<template #append>
-							<v-button :to="folder ? { path: `/files/folders/${folder}/+` } : { path: '/files/+' }">
+							<v-button
+								:disabled="createAllowed === false"
+								v-tooltip.bottom="createAllowed ? t('add_file') : t('not_allowed')"
+								:to="folder ? { path: `/files/folders/${folder}/+` } : { path: '/files/+' }"
+							>
 								{{ t('add_file') }}
 							</v-button>
 						</template>

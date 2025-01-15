@@ -1,7 +1,7 @@
+import { useEnv } from '@directus/env';
 import type { Transporter } from 'nodemailer';
 import nodemailer from 'nodemailer';
-import { useEnv } from './env.js';
-import { useLogger } from './logger.js';
+import { useLogger } from './logger/index.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
 
 import { createRequire } from 'node:module';
@@ -16,13 +16,13 @@ export default function getMailer(): Transporter {
 	const env = useEnv();
 	const logger = useLogger();
 
-	const transportName = env['EMAIL_TRANSPORT'].toLowerCase();
+	const transportName = (env['EMAIL_TRANSPORT'] as string).toLowerCase();
 
 	if (transportName === 'sendmail') {
 		transporter = nodemailer.createTransport({
 			sendmail: true,
-			newline: env['EMAIL_SENDMAIL_NEW_LINE'] || 'unix',
-			path: env['EMAIL_SENDMAIL_PATH'] || '/usr/sbin/sendmail',
+			newline: (env['EMAIL_SENDMAIL_NEW_LINE'] as string) || 'unix',
+			path: (env['EMAIL_SENDMAIL_PATH'] as string) || '/usr/sbin/sendmail',
 		});
 	} else if (transportName === 'ses') {
 		const aws = require('@aws-sdk/client-ses');
@@ -39,8 +39,8 @@ export default function getMailer(): Transporter {
 
 		if (env['EMAIL_SMTP_USER'] || env['EMAIL_SMTP_PASSWORD']) {
 			auth = {
-				user: env['EMAIL_SMTP_USER'],
-				pass: env['EMAIL_SMTP_PASSWORD'],
+				user: env['EMAIL_SMTP_USER'] as string,
+				pass: env['EMAIL_SMTP_PASSWORD'] as string,
 			};
 		}
 
@@ -66,14 +66,6 @@ export default function getMailer(): Transporter {
 					domain: env['EMAIL_MAILGUN_DOMAIN'],
 				},
 				host: env['EMAIL_MAILGUN_HOST'] || 'api.mailgun.net',
-			}) as any,
-		);
-	} else if (transportName === 'sendgrid') {
-		const sg = require('nodemailer-sendgrid');
-
-		transporter = nodemailer.createTransport(
-			sg({
-				apiKey: env['EMAIL_SENDGRID_API_KEY'],
 			}) as any,
 		);
 	} else {

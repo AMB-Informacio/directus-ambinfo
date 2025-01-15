@@ -7,7 +7,7 @@ import { unexpectedError } from '@/utils/unexpected-error';
 import { Filter, Item } from '@directus/types';
 import { getEndpoint, toArray } from '@directus/utils';
 import { clamp, cloneDeep, get, isEqual, merge } from 'lodash';
-import { Ref, computed, ref, unref, watch } from 'vue';
+import { Ref, computed, ref, watch } from 'vue';
 
 export type RelationQueryMultiple = {
 	page: number;
@@ -35,13 +35,13 @@ export function useRelationMultiple(
 	value: Ref<Record<string, any> | any[] | undefined>,
 	previewQuery: Ref<RelationQueryMultiple>,
 	relation: Ref<RelationM2A | RelationM2M | RelationO2M | undefined>,
-	itemId: Ref<string | number>,
+	itemId: Ref<string | number | null>,
 ) {
 	const loading = ref(false);
 	const fetchedItems = ref<Record<string, any>[]>([]);
 	const existingItemCount = ref(0);
 
-	const { cleanItem, getPage, isLocalItem, getItemEdits, isEmpty } = useUtil();
+	const { cleanItem, getPage, isLocalItem, getItemEdits, isEmpty, applySort } = useUtil();
 
 	const _value = computed<ChangesItem>({
 		get() {
@@ -79,7 +79,15 @@ export function useRelationMultiple(
 		}
 	});
 
-	watch([previewQuery, itemId, relation], updateFetchedItems, { immediate: true });
+	watch(
+		[previewQuery, itemId, relation],
+		(newData, oldData) => {
+			if (!isEqual(newData, oldData)) {
+				updateFetchedItems();
+			}
+		},
+		{ immediate: true },
+	);
 
 	const { fetchedSelectItems, selected, isItemSelected, selectedOnPage } = useSelected();
 
@@ -116,33 +124,36 @@ export function useRelationMultiple(
 				: relation.value.junctionPrimaryKeyField.field;
 
 		const items: DisplayItem[] = fetchedItems.value.map((item: Record<string, any>) => {
-			const editsIndex = _value.value.update.findIndex(
-				(edit) => typeof edit === 'object' && edit[targetPKField] === item[targetPKField],
-			);
+			let edits;
 
-			const deleteIndex = _value.value.delete.findIndex((id) => id === item[targetPKField]);
+			for (const [index, value] of _value.value.update.entries()) {
+				if (typeof value === 'object' && value[targetPKField] === item[targetPKField]) {
+					edits = { index, value };
+					break;
+				}
+			}
 
 			let updatedItem: Record<string, any> = cloneDeep(item);
 
-			if (editsIndex !== -1) {
-				const edits = unref(_value.value.update[editsIndex]);
-
+			if (edits) {
 				updatedItem = {
 					...updatedItem,
-					...edits,
+					...edits.value,
 				};
 
 				if (relation.value?.type === 'm2m' || relation.value?.type === 'm2a') {
 					updatedItem[relation.value.junctionField.field] = {
 						...cloneDeep(item)[relation.value.junctionField.field],
-						...edits[relation.value.junctionField.field],
+						...edits.value[relation.value.junctionField.field],
 					};
 				}
 
 				updatedItem.$type = 'updated';
-				updatedItem.$index = editsIndex;
-				updatedItem.$edits = editsIndex;
+				updatedItem.$index = edits.index;
+				updatedItem.$edits = edits.index;
 			}
+
+			const deleteIndex = _value.value.delete.findIndex((id) => id === item[targetPKField]);
 
 			if (deleteIndex !== -1) {
 				merge(updatedItem, { $type: 'deleted', $index: deleteIndex });
@@ -165,8 +176,8 @@ export function useRelationMultiple(
 					case 'm2a': {
 						const itemCollection = item[relation.value.collectionField.field];
 						const editCollection = edit[relation.value.collectionField.field];
-						const itemPkField = relation.value.relationPrimaryKeyFields[itemCollection].field;
-						const editPkField = relation.value.relationPrimaryKeyFields[editCollection].field;
+						const itemPkField = relation.value.relationPrimaryKeyFields[itemCollection]!.field;
+						const editPkField = relation.value.relationPrimaryKeyFields[editCollection]!.field;
 
 						return (
 							itemCollection === editCollection &&
@@ -175,6 +186,8 @@ export function useRelationMultiple(
 						);
 					}
 				}
+
+				return;
 			});
 
 			if (!fetchedItem) return edit;
@@ -190,12 +203,19 @@ export function useRelationMultiple(
 		if ((previewQuery.value.limit > 0 && totalItemCount.value > previewQuery.value.limit) || !sortField) return items;
 
 		return items.sort((a, b) => {
+			let left;
+			let right;
+
 			if (sortField.startsWith('-')) {
 				const field = sortField.substring(1);
-				return get(b, field) - get(a, field);
+				left = get(b, field);
+				right = get(a, field);
+			} else {
+				left = get(a, sortField);
+				right = get(b, sortField);
 			}
 
-			return get(a, sortField) - get(b, sortField);
+			return Number(left > right) - Number(right > left);
 		});
 	});
 
@@ -205,8 +225,11 @@ export function useRelationMultiple(
 		return { create, update, remove, select };
 
 		function create(...items: Record<string, any>[]) {
+			let sortCount = totalItemCount.value;
+
 			for (const item of items) {
-				target.value.create.push(cleanItem(item));
+				const finalItem = applySort(cleanItem(item), sortCount++);
+				target.value.create.push(finalItem);
 			}
 
 			updateValue();
@@ -215,20 +238,24 @@ export function useRelationMultiple(
 		function update(...items: DisplayItem[]) {
 			if (!relation.value) return;
 
+			let sortCount = totalItemCount.value;
+
 			for (const item of items) {
+				const finalItem = cleanItem(item);
+
 				if (item.$type === undefined || item.$index === undefined) {
-					target.value.update.push(cleanItem(item));
+					target.value.update.push(applySort(finalItem, sortCount++));
 				} else if (item.$type === 'created') {
-					target.value.create[item.$index] = cleanItem(item);
+					target.value.create[item.$index] = finalItem;
 				} else if (item.$type === 'updated') {
 					if (isEmpty(item)) target.value.update.splice(item.$index, 1);
-					else target.value.update[item.$index] = cleanItem(item);
+					else target.value.update[item.$index] = finalItem;
 				} else if (item.$type === 'deleted') {
 					if (item.$edits !== undefined) {
 						if (isEmpty(item)) target.value.update.splice(item.$index, 1);
-						else target.value.update[item.$edits] = cleanItem(item);
+						else target.value.update[item.$edits] = finalItem;
 					} else {
-						target.value.update.push(cleanItem(item));
+						target.value.update.push(finalItem);
 					}
 				}
 			}
@@ -289,7 +316,7 @@ export function useRelationMultiple(
 							[info.reverseJunctionField.field]: itemId.value,
 							[info.collectionField.field]: collection,
 							[info.junctionField.field]: {
-								[info.relationPrimaryKeyFields[collection].field]: item,
+								[info.relationPrimaryKeyFields[collection]!.field]: item,
 							},
 						};
 					}
@@ -308,7 +335,7 @@ export function useRelationMultiple(
 	async function updateFetchedItems() {
 		if (!relation.value) return;
 
-		if (!itemId.value || itemId.value === '+') {
+		if (itemId.value === undefined || itemId.value === '+') {
 			fetchedItems.value = [];
 			return;
 		}
@@ -324,7 +351,7 @@ export function useRelationMultiple(
 				fields.add(relation.value.collectionField.field);
 
 				for (const collection of relation.value.allowedCollections) {
-					const pkField = relation.value.relationPrimaryKeyFields[collection.collection];
+					const pkField = relation.value.relationPrimaryKeyFields[collection.collection]!;
 					fields.add(`${relation.value.junctionField.field}:${collection.collection}.${pkField.field}`);
 				}
 
@@ -482,9 +509,11 @@ export function useRelationMultiple(
 
 				case 'm2a': {
 					const collection = item[relation.value.collectionField.field];
-					return item[relation.value.junctionField.field][relation.value.relationPrimaryKeyFields[collection].field];
+					return item[relation.value.junctionField.field][relation.value.relationPrimaryKeyFields[collection]!.field];
 				}
 			}
+
+			return;
 		}
 
 		function isItemSelected(item: DisplayItem) {
@@ -575,7 +604,7 @@ export function useRelationMultiple(
 				(acc, item) => {
 					const collection = item[collectionField];
 					if (!(collection in acc)) acc[collection] = [];
-					acc[collection].push(item);
+					acc[collection]?.push(item);
 
 					return acc;
 				},
@@ -584,7 +613,7 @@ export function useRelationMultiple(
 
 			const responses = await Promise.all(
 				Object.entries(selectGrouped).map(([collection, items]) => {
-					const pkField = relation.relationPrimaryKeyFields[collection].field;
+					const pkField = relation.relationPrimaryKeyFields[collection]!.field;
 
 					const fields = new Set(
 						previewQuery.value.fields.reduce<string[]>((acc, field) => {
@@ -627,6 +656,17 @@ export function useRelationMultiple(
 	}
 
 	function useUtil() {
+		function applySort(item: Record<string, any>, totalSortCount = 0): Record<string, any> {
+			const sortField = relation.value?.sortField;
+
+			if (!sortField || totalSortCount > previewQuery.value.limit || item[sortField] !== undefined) return item;
+
+			return {
+				...item,
+				[sortField]: totalSortCount + 1,
+			};
+		}
+
 		function cleanItem(item: DisplayItem) {
 			return Object.entries(item).reduce((acc, [key, value]) => {
 				if (!key.startsWith('$')) acc[key] = value;
@@ -694,33 +734,40 @@ export function useRelationMultiple(
 		}
 
 		function getItemEdits(item: DisplayItem) {
+			const sortField = relation.value?.sortField;
+			let edits: DisplayItem = {};
+
 			if ('$type' in item && item.$index !== undefined) {
 				if (item.$type === 'created') {
-					return {
+					edits = {
 						..._value.value.create[item.$index],
-						$type: 'created',
+						$type: item.$type,
 						$index: item.$index,
 					};
 				} else if (item.$type === 'updated') {
-					return {
+					edits = {
 						..._value.value.update[item.$index],
-						$type: 'updated',
+						$type: item.$type,
 						$index: item.$index,
 					};
 				} else if (item.$type === 'deleted' && item.$edits !== undefined) {
-					return {
+					edits = {
 						..._value.value.update[item.$edits],
-						$type: 'deleted',
+						$type: item.$type,
 						$index: item.$index,
 						$edits: item.$edits,
 					};
 				}
 			}
 
-			return {};
+			if (sortField && item[sortField] !== undefined && edits[sortField] === undefined) {
+				edits[sortField] = item[sortField];
+			}
+
+			return edits;
 		}
 
-		return { cleanItem, getPage, isLocalItem, getItemEdits, isEmpty };
+		return { applySort, cleanItem, getPage, isLocalItem, getItemEdits, isEmpty };
 	}
 
 	return {
